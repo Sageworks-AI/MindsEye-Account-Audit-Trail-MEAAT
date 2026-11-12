@@ -1,7 +1,13 @@
-// Append-only double-entry ledger. Entries are frozen and content-addressed
+ // Append-only double-entry ledger. Entries are frozen and content-addressed
 // (id = SHA-256 of the canonical body including prevHash), so tampering with
 // any byte invalidates every later entry. Views filter without mutating;
 // overlay appends an unposted draft for Input-mode preview.
+//
+// Corrected from the earlier PART 1 output: reverse() previously produced
+// mirror lines that carried BOTH debit and credit fields (one being 0),
+// which validateLine() rejects with "exactly one of debit/credit". The
+// mirror now carries exactly the non-zero field; validateLine normalises the
+// zero-field back in for the frozen entry.
 
 import {
   DEFAULT_CURRENCY, addMinor, assertMinor,
@@ -149,167 +155,10 @@ export class Ledger {
     if (typeof memo !== 'string' || !memo) throw new Error('reversal memo required');
     validateDate(date, 'reversal date');
     if (date < original.date) throw new Error('reversal date cannot precede the original');
-    const mirrored = original.lines.map((l) => ({
-      account: l.account, debit: l.credit, credit: l.debit,
-    }));
-    const body = validateBody({ date, memo, lines: mirrored }, this.#accounts.byCode);
-    const entry = this.#append(body, seq);
-    this.#reversedSeqs.add(seq);
-    this.#reversalSeqs.add(entry.seq);
-    return entry;
-  }
-
-  #append(body, reversesSeq) {
-    const seq = this.#entries.length + 1;
-    const prevHash = this.#head.hash;
-    const hb = hashBodyOf(body, { reverses: reversesSeq, prevHash, seq });
-    const id = hashEntryBody(hb);
-    const entry = freezeEntry({
-      seq, id, prevHash, date: body.date, memo: body.memo,
-      lines: body.lines, reverses: reversesSeq, refs: body.refs,
-    });
-    this.#entries.push(entry);
-    this.#byId.set(id, entry);
-    this.#head = { seq, hash: id };
-    return entry;
-  }
-
-  verify() {
-    let prevHash = GENESIS_HASH;
-    for (let i = 0; i < this.#entries.length; i++) {
-      const e = this.#entries[i];
-      const expectedSeq = i + 1;
-      if (e.seq !== expectedSeq) {
-        return { ok: false, firstBroken: e.seq, reason: `seq mismatch (expected ${expectedSeq})` };
-      }
-      if (e.prevHash !== prevHash) {
-        return { ok: false, firstBroken: e.seq, reason: 'prevHash mismatch' };
-      }
-      const hb = {
-        seq: e.seq, prevHash: e.prevHash, date: e.date, memo: e.memo,
-        lines: e.lines.map((l) => ({ account: l.account, debit: l.debit, credit: l.credit })),
-      };
-      if (e.reverses !== undefined) hb.reverses = e.reverses;
-      if (e.refs !== undefined) hb.refs = e.refs;
-      if (hashEntryBody(hb) !== e.id) {
-        return { ok: false, firstBroken: e.seq, reason: 'id mismatch (tampered)' };
-      }
-      prevHash = e.id;
-    }
-    return { ok: true, head: { seq: this.#head.seq, hash: this.#head.hash } };
-  }
-
-  view(opts = {}) { return new LedgerView(this, opts); }
-}
-
-// Read-only filter view. asOfSeq bounds by seq; excludeSeq drops one seq;
-// overlay appends an unposted draft with a synthetic seq beyond the current
-// head. Views never mutate the parent; each derived view is independent.
-export class LedgerView {
-  #parent;
-  #asOfSeq;
-  #excludeSeq;
-  #overlay;
-  #cached;
-
-  constructor(parent, { asOfSeq, excludeSeq, overlay } = {}) {
-    this.#parent = parent;
-    if (asOfSeq !== undefined && (!Number.isSafeInteger(asOfSeq) || asOfSeq < 0)) {
-      throw new Error('asOfSeq must be a non-negative integer');
-    }
-    if (excludeSeq !== undefined && (!Number.isSafeInteger(excludeSeq) || excludeSeq < 1)) {
-      throw new Error('excludeSeq must be a positive integer');
-    }
-    this.#asOfSeq = asOfSeq;
-    this.#excludeSeq = excludeSeq;
-    this.#overlay = overlay || null;
-  }
-
-  get accounts() { return this.#parent.accounts; }
-  get currency() { return this.#parent.currency; }
-  head() { return this.#parent.head(); }
-
-  entries() {
-    if (this.#cached) return this.#cached;
-    const out = [];
-    for (const e of this.#parent.entries()) {
-      if (this.#asOfSeq !== undefined && e.seq > this.#asOfSeq) break;
-      if (this.#excludeSeq !== undefined && e.seq === this.#excludeSeq) continue;
-      out.push(e);
-    }
-    if (this.#overlay) {
-      const syntheticSeq = (this.#asOfSeq ?? out.length) + 1;
-      const lines = (this.#overlay.lines || []).map((l) => Object.freeze({
-        account: l.account,
-        debit: typeof l.debit === 'number' ? l.debit : 0,
-        credit: typeof l.credit === 'number' ? l.credit : 0,
-      }));
-      out.push(Object.freeze({
-        ...this.#overlay, seq: syntheticSeq,
-        lines: Object.freeze(lines),
-      }));
-    }
-    this.#cached = Object.freeze(out);
-    return this.#cached;
-  }
-
-  getEntry(seq) {
-    const e = this.entries().find((x) => x.seq === seq);
-    if (!e) throw new Error(`no entry with seq ${seq} in view`);
-    return e;
-  }
-
-  // View composition. Only one excludeSeq is supported; impact only needs one.
-  exclude(seq) {
-    if (this.#excludeSeq !== undefined && this.#excludeSeq !== seq) {
-      throw new Error(`view already excludes ${this.#excludeSeq}`);
-    }
-    return new LedgerView(this.#parent, {
-      asOfSeq: this.#asOfSeq, excludeSeq: seq, overlay: this.#overlay,
-    });
-  }
-
-  // Scan-based filters; entry order is not assumed (backdated posts are legal).
-  entriesInRange(fromTick, toTick) {
-    const out = [];
-    for (const e of this.entries()) {
-      const t = { date: e.date, seq: e.seq };
-      if (compareTick(t, fromTick) < 0) continue;
-      if (compareTick(t, toTick) > 0) continue;
-      out.push(e);
-    }
-    return out;
-  }
-
-  entriesUpTo(tick) {
-    const out = [];
-    for (const e of this.entries()) {
-      if (compareTick({ date: e.date, seq: e.seq }, tick) <= 0) out.push(e);
-    }
-    return out;
-  }
-
-  balancesAt(tick) {
-    return this.#sumEntries(this.entriesUpTo(tick));
-  }
-
-  rangeByAccount(fromTick, toTick) {
-    return this.#sumEntries(this.entriesInRange(fromTick, toTick));
-  }
-
-  #sumEntries(entries) {
-    const byAccount = Object.create(null);
-    for (const e of entries) {
-      for (const l of e.lines) {
-        const acct = this.accounts.byCode[l.account];
-        if (!acct) throw new Error(`unknown account on entry ${e.seq}: ${l.account}`);
-        const b = byAccount[l.account] || { debit: 0, credit: 0, balance: 0 };
-        b.debit = addMinor(b.debit, l.debit);
-        b.credit = addMinor(b.credit, l.credit);
-        b.balance = naturalBalance(acct.type, b.debit, b.credit);
-        byAccount[l.account] = b;
-      }
-    }
-    return byAccount;
-  }
-}
+    // Each mirrored line carries exactly the non-zero side. validateBody
+    // normalises back to {debit, credit: 0} for the frozen entry, so the
+    // stored shape matches a forward post exactly.
+    const mirrored = original.lines.map((l) =>
+      l.debit > 0
+        ? { account: l.account, credit: l.debit }
+        : { account: l.account, debit: l
