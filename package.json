@@ -1,0 +1,37 @@
+{
+  "name": "mindseye-account-audit-trail-meaat",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Mind's Eye Account Audit Trail (MEAAT) — enclosed, offline accounting system with a split screen of state cards.",
+  "license": "MIT",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "dev": "concurrently -n server,vite -c cyan,magenta \"node --watch server/index.mjs\" \"vite --config app/vite.config.js\"",
+    "build": "vite build --config app/vite.config.js",
+    "start": "node server/index.mjs --production",
+    "test": "node --test --test-reporter=spec && node scripts/check-boundaries.mjs",
+    "demo": "node demo/demo.ledger.mjs",
+    "report": "node demo/report.mjs",
+    "verify": "node scripts/verify-journal.mjs",
+    "check-boundaries": "node scripts/check-boundaries.mjs",
+    "build:space": "echo 'space C++ to wasm build (implemented in S5; requires Emscripten)'",
+    "test:cpp": "echo 'native C++ tests via CMake (implemented in S5/S8; requires a compiler)'",
+    "verify:space": "echo 'space manifest and parity check (implemented in S5)'",
+    "build:attention": "echo 'attention C++ to wasm build (implemented in S8; requires Emscripten)'",
+    "test:attention": "echo 'attention JS twin and wasm tests (implemented in S8)'",
+    "conduct": "echo 'python -m conductor build (implemented in S9)'",
+    "conduct:verify": "echo 'python -m conductor verify (implemented in S9)'",
+    "verify:attention": "echo 'attention manifest and parity check (implemented in S8)'",
+    "test:conductor": "echo 'python conductor tests (implemented in S9; skipped without Python)'"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^8.2.2",
+    "vite": "^5.4.0"
+  }
+}
