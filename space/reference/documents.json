@@ -1,0 +1,192 @@
+{
+  "version": 1,
+  "_comment": "Reference defaults from common small-business accounting practice. Not legal or regulatory standards. typeScalePt/leadingPt are set to roughly 10 pt body, 12 pt leading, 13-14 pt headings, 8 pt captions. marginsPt ~20 mm = 57 pt. shapeDimensions declare the logical page size for each shape class (in pt). To customise, edit these fields; reference/loader.mjs rejects missing fields, non-integers and margins larger than the page.",
+  "archetypes": {
+    "balance_sheet_report_form": {
+      "id": "balance_sheet_report_form",
+      "paper": "A4",
+      "orientation": "portrait",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 13, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 500, "amountColumns": 1, "minAmountWidthPt": 60 },
+      "typicalRows": 25,
+      "maxRows": 40,
+      "headerPt": 60,
+      "footerPt": 30,
+      "paginates": true,
+      "carryForward": "subtotal",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 595, "hPt": 842 },
+        "HALF":    { "wPt": 595, "hPt": 450 },
+        "QUARTER": { "wPt": 595, "hPt": 250 },
+        "STRIP":   { "wPt": 595, "hPt": 40 }
+      }
+    },
+    "balance_sheet_t_form": {
+      "id": "balance_sheet_t_form",
+      "paper": "A4",
+      "orientation": "landscape",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 13, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 500, "amountColumns": 1, "minAmountWidthPt": 60 },
+      "typicalRows": 30,
+      "maxRows": 40,
+      "headerPt": 60,
+      "footerPt": 30,
+      "paginates": true,
+      "carryForward": "subtotal",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 842, "hPt": 595 },
+        "HALF":    { "wPt": 842, "hPt": 320 },
+        "QUARTER": { "wPt": 842, "hPt": 180 },
+        "STRIP":   { "wPt": 842, "hPt": 40 }
+      }
+    },
+    "income_statement": {
+      "id": "income_statement",
+      "paper": "A4",
+      "orientation": "portrait",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 13, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 500, "amountColumns": 1, "minAmountWidthPt": 60 },
+      "typicalRows": 20,
+      "maxRows": 30,
+      "headerPt": 60,
+      "footerPt": 30,
+      "paginates": true,
+      "carryForward": "subtotal",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 595, "hPt": 842 },
+        "HALF":    { "wPt": 595, "hPt": 450 },
+        "QUARTER": { "wPt": 595, "hPt": 250 },
+        "STRIP":   { "wPt": 595, "hPt": 40 }
+      }
+    },
+    "cash_flow_statement": {
+      "id": "cash_flow_statement",
+      "paper": "A4",
+      "orientation": "portrait",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 13, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 500, "amountColumns": 1, "minAmountWidthPt": 60 },
+      "typicalRows": 20,
+      "maxRows": 30,
+      "headerPt": 60,
+      "footerPt": 30,
+      "paginates": true,
+      "carryForward": "subtotal",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 595, "hPt": 842 },
+        "HALF":    { "wPt": 595, "hPt": 450 },
+        "QUARTER": { "wPt": 595, "hPt": 250 },
+        "STRIP":   { "wPt": 595, "hPt": 40 }
+      }
+    },
+    "trial_balance": {
+      "id": "trial_balance",
+      "paper": "A4",
+      "orientation": "portrait",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 13, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 400, "amountColumns": 2, "minAmountWidthPt": 60 },
+      "typicalRows": 30,
+      "maxRows": 60,
+      "headerPt": 60,
+      "footerPt": 30,
+      "paginates": true,
+      "carryForward": "subtotal",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 595, "hPt": 842 },
+        "HALF":    { "wPt": 595, "hPt": 450 },
+        "QUARTER": { "wPt": 595, "hPt": 250 },
+        "STRIP":   { "wPt": 595, "hPt": 40 }
+      }
+    },
+    "journal_voucher": {
+      "id": "journal_voucher",
+      "paper": "A5",
+      "orientation": "landscape",
+      "marginsPt": { "top": 40, "right": 40, "bottom": 40, "left": 40 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 12, "title": 13 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 600, "amountColumns": 2, "minAmountWidthPt": 50 },
+      "typicalRows": 8,
+      "maxRows": 20,
+      "headerPt": 50,
+      "footerPt": 40,
+      "paginates": false,
+      "carryForward": "none",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 595, "hPt": 420 },
+        "HALF":    { "wPt": 595, "hPt": 220 },
+        "QUARTER": { "wPt": 595, "hPt": 120 },
+        "STRIP":   { "wPt": 595, "hPt": 40 }
+      }
+    },
+    "receipt_roll": {
+      "id": "receipt_roll",
+      "paper": "80mm-roll",
+      "orientation": "portrait",
+      "marginsPt": { "top": 10, "right": 10, "bottom": 10, "left": 10 },
+      "typeScalePt": { "caption": 7, "body": 9, "label": 9, "heading": 11, "title": 12 },
+      "leadingPt": 11,
+      "columns": { "labelSharePermille": 500, "amountColumns": 1, "minAmountWidthPt": 40 },
+      "typicalRows": 10,
+      "maxRows": 30,
+      "headerPt": 30,
+      "footerPt": 20,
+      "paginates": false,
+      "carryForward": "none",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 227, "hPt": 500 },
+        "HALF":    { "wPt": 227, "hPt": 260 },
+        "QUARTER": { "wPt": 227, "hPt": 140 },
+        "STRIP":   { "wPt": 227, "hPt": 40 }
+      }
+    },
+    "small_business_flowchart": {
+      "id": "small_business_flowchart",
+      "paper": "A4",
+      "orientation": "landscape",
+      "marginsPt": { "top": 57, "right": 57, "bottom": 57, "left": 57 },
+      "typeScalePt": { "caption": 8, "body": 10, "label": 10, "heading": 12, "title": 14 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 500, "amountColumns": 0, "minAmountWidthPt": 40 },
+      "typicalRows": 15,
+      "maxRows": 40,
+      "headerPt": 50,
+      "footerPt": 30,
+      "paginates": false,
+      "carryForward": "none",
+      "shapeDimensions": {
+        "FULL":    { "wPt": 842, "hPt": 595 },
+        "HALF":    { "wPt": 842, "hPt": 320 },
+        "QUARTER": { "wPt": 842, "hPt": 180 },
+        "STRIP":   { "wPt": 842, "hPt": 40 }
+      }
+    },
+    "sequence_strip": {
+      "id": "sequence_strip",
+      "paper": "screen",
+      "orientation": "landscape",
+      "marginsPt": { "top": 4, "right": 8, "bottom": 4, "left": 8 },
+      "typeScalePt": { "caption": 8, "body": 9, "label": 9, "heading": 10, "title": 10 },
+      "leadingPt": 12,
+      "columns": { "labelSharePermille": 0, "amountColumns": 0, "minAmountWidthPt": 0 },
+      "typicalRows": 1,
+      "maxRows": 1,
+      "headerPt": 0,
+      "footerPt": 0,
+      "paginates": false,
+      "carryForward": "none",
+      "shapeDimensions": {
+        "STRIP":   { "wPt": 720, "hPt": 40 }
+      }
+    }
+  }
+}
