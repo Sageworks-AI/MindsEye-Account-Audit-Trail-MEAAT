@@ -106,4 +106,52 @@ test('boundary: subpath of scoped package is matched by package name', async () 
     { 'core/x.mjs': "import sub from '@vitejs/plugin-react/subpath';\n" },
     async (root) => {
       const v = await checkRepository(root);
-      assert.equal(v.length, 
+      assert.equal(v.length, 1);
+    }
+  );
+});
+
+test('boundary: sequencer imports nothing', async () => {
+  await withFixture(
+    { 'sequencer/x.mjs': "import '../core/y.mjs';\n" },
+    async (root) => {
+      const v = await checkRepository(root);
+      assert.equal(v.length, 1);
+      assert.match(v[0], /sequencer\/x\.mjs.*core/);
+    }
+  );
+});
+
+test('boundary: space imports nothing outside space', async () => {
+  await withFixture(
+    { 'space/x.mjs': "import '../core/y.mjs';\n" },
+    async (root) => {
+      const v = await checkRepository(root);
+      assert.equal(v.length, 1);
+    }
+  );
+});
+
+test('boundary: test/ and scripts/ may import anything', async () => {
+  await withFixture(
+    {
+      'test/a.mjs':      "import '../core/y.mjs';\nimport '../space/z.mjs';\n",
+      'scripts/a.mjs':   "import '../attention/b.mjs';\n",
+    },
+    async (root) => {
+      const v = await checkRepository(root);
+      assert.deepEqual(v, []);
+    }
+  );
+});
+
+test('boundary: escape above repository root is rejected', async () => {
+  await withFixture(
+    { 'core/x.mjs': "import '../../../outside.mjs';\n" },
+    async (root) => {
+      const v = await checkRepository(root);
+      assert.equal(v.length, 1);
+      assert.match(v[0], /escapes the repository/);
+    }
+  );
+});
