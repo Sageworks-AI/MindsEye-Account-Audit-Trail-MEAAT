@@ -1,0 +1,1 @@
+# C++20 sources. No exceptions across the ABI, no RTTI, no floats, no dynamic alloc in the ABI layer. S5.
