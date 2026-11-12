@@ -62,4 +62,9 @@ export function build(view, period) {
       seq: entry.seq,
       id: entry.id,
       date: entry.date,
-      memo: entry.memo
+      memo: entry.memo,
+      ...(entry.reverses !== undefined ? { reverses: entry.reverses } : {}),
+      ...(entry.refs !== undefined ? { refs: { ...entry.refs } } : {}),
+    },
+  });
+}
