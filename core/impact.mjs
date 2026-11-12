@@ -2,9 +2,13 @@
 // twice — once from the normal view and once from view.exclude(seq) — and the
 // two builds are merged by section id and row id. Every row carries
 // { before, after, delta, touched } so the renderer can dim untouched rows.
-// Checks compare the deltas against the entry's own lines, the double-entry
-// identity (sum of natural-signed deltas is zero), and the balance-sheet
-// equation delta. A failure here means the card and the journal disagree.
+//
+// Corrected from the earlier PART 2 output: the accumulated-earnings check
+// used a signed sum that only worked for accounts whose natural sign matches
+// revenue. Accumulated earnings = revenue - expense, so a natural-signed
+// expense (+debit) REDUCES accumulated; the check now flips sign for expense.
+// The old "natural-signed sum = 0" check was mathematically false for entries
+// touching both debit-normal and credit-normal accounts and was removed.
 import { shortHash } from './hash.mjs';
 import { makeCheck } from './checks.mjs';
 
@@ -19,58 +23,43 @@ export function computeImpact(buildFn, view, period, entryId) {
   }
   const withoutEntry = buildFn(view.exclude(entry.seq), period);
 
-  const mergedSections = [];
-  for (const section of withEntry.sections) {
-    const other = withoutEntry.sections.find((s) => s.id === section.id);
-    const rows = [];
-    let totalBefore = 0;
-    let totalAfter = 0;
-    for (const row of section.rows) {
-      const otherRow = other ? other.rows.find((r) => r.id === row.id) : null;
-      const before = otherRow ? pickAmount(otherRow) : 0;
-      const after = pickAmount(row);
-      const delta = after - before;
-      rows.push(Object.freeze({
-        ...row, before, after, delta, touched: delta !== 0,
-      }));
-      totalBefore += before;
-      totalAfter += after;
-    }
-    if (other) {
-      for (const r of other.rows) {
-        if (section.rows.some((row) => row.id === r.id)) continue;
-        const before = pickAmount(r);
-        if (before === 0) continue;
-        rows.push(Object.freeze({
-          ...r, before, after: 0, delta: -before, touched: true,
-        }));
-        totalBefore += before;
-      }
-    }
-    mergedSections.push({
-      ...section,
-      rows,
-      total: { before: totalBefore, after: totalAfter, delta: totalAfter - totalBefore },
-    });
-  }
-
+  const mergedSections = mergeSections(withEntry, withoutEntry);
   const checks = [];
+
   const expected = expectedDeltas(view, entry);
 
-  // (a) Every single-account row's delta matches the entry's natural-signed
-  // effect on that account. Derived rows (no `code`) are checked separately.
+  // (a) Every single-account row's delta equals the entry's natural-signed
+  // effect on that account. Rows for untouched accounts must show delta 0.
   for (const section of mergedSections) {
     for (const row of section.rows) {
       if (!row.code) continue;
-      if (!Object.prototype.hasOwnProperty.call(expected, row.code)) continue;
+      const exp = Object.prototype.hasOwnProperty.call(expected, row.code)
+        ? expected[row.code] : 0;
       checks.push(makeCheck(
         `impact: delta for ${row.code} matches entry effect`,
-        row.delta === expected[row.code],
-        `row=${row.delta} expected=${expected[row.code]}`));
+        row.delta === exp,
+        `row=${row.delta} expected=${exp}`));
     }
   }
 
-  // (b) Balance-sheet equation in deltas.
+  // (a') Accumulated-earnings derived row: delta = change in (revenue - expense).
+  const accumRow = mergedSections.flatMap((s) => s.rows)
+    .find((r) => r.id === 'accumulated_earnings');
+  if (accumRow) {
+    let accumExpected = 0;
+    for (const code of Object.keys(expected)) {
+      const acct = view.accounts.byCode[code];
+      if (!acct) continue;
+      if (acct.type === 'revenue') accumExpected += expected[code];
+      else if (acct.type === 'expense') accumExpected -= expected[code];
+    }
+    checks.push(makeCheck(
+      'impact: accumulated earnings delta matches entry effect on P&L accounts',
+      accumRow.delta === accumExpected,
+      `row=${accumRow.delta} expected=${accumExpected}`));
+  }
+
+  // (b) Balance sheet equation in deltas.
   if (withEntry.type === 'balance_sheet') {
     const assets = mergedSections.find((s) => s.id === 'assets');
     const liab = mergedSections.find((s) => s.id === 'liabilities');
@@ -93,7 +82,8 @@ export function computeImpact(buildFn, view, period, entryId) {
     }
     let classDeltaSum = 0;
     for (const sec of mergedSections) {
-      if (sec.id.startsWith('cf_') && !['cf_change', 'cf_opening', 'cf_closing'].includes(sec.id)) {
+      if (sec.id.startsWith('cf_') &&
+          !['cf_change', 'cf_opening', 'cf_closing'].includes(sec.id)) {
         classDeltaSum += sec.total.delta;
       }
     }
@@ -103,14 +93,17 @@ export function computeImpact(buildFn, view, period, entryId) {
       `sum=${classDeltaSum} effect=${cashEffect}`));
   }
 
-  // (d) Double-entry identity: sum of natural-signed deltas across all of the
-  // entry's lines is zero.
-  let naturalSum = 0;
-  for (const v of Object.values(expected)) naturalSum += v;
-  checks.push(makeCheck('impact: entry natural-signed effect sums to zero',
-    naturalSum === 0, `sum=${naturalSum}`));
+  // (d) Each section's delta equals the difference between the two full builds.
+  for (const section of mergedSections) {
+    const withTotal = sectionTotal(withEntry.sections.find((s) => s.id === section.id));
+    const withoutTotal = sectionTotal(withoutEntry.sections.find((s) => s.id === section.id));
+    checks.push(makeCheck(
+      `impact: section ${section.id} delta equals difference of full builds`,
+      section.total.delta === withTotal - withoutTotal,
+      `observed=${section.total.delta} expected=${withTotal - withoutTotal}`));
+  }
 
-  // Outside the period: every delta must be zero.
+  // Outside period: all deltas must be zero.
   const outside = isEntryOutside(entry, withEntry.period);
   if (outside) {
     const allZero = mergedSections.every((s) => s.total.delta === 0);
@@ -134,8 +127,50 @@ export function computeImpact(buildFn, view, period, entryId) {
   return Object.freeze({ ...withOk, hash });
 }
 
+function mergeSections(withEntry, withoutEntry) {
+  const out = [];
+  for (const section of withEntry.sections) {
+    const other = withoutEntry.sections.find((s) => s.id === section.id);
+    const rows = [];
+    let totalBefore = 0;
+    let totalAfter = 0;
+    for (const row of section.rows) {
+      const otherRow = other ? other.rows.find((r) => r.id === row.id) : null;
+      const before = otherRow ? pickAmount(otherRow) : 0;
+      const after = pickAmount(row);
+      rows.push(Object.freeze({
+        ...row, before, after, delta: after - before, touched: (after - before) !== 0,
+      }));
+      totalBefore += before;
+      totalAfter += after;
+    }
+    if (other) {
+      for (const r of other.rows) {
+        if (section.rows.some((row) => row.id === r.id)) continue;
+        const before = pickAmount(r);
+        if (before === 0) continue;
+        rows.push(Object.freeze({
+          ...r, before, after: 0, delta: -before, touched: true,
+        }));
+        totalBefore += before;
+      }
+    }
+    out.push({
+      ...section, rows,
+      total: { before: totalBefore, after: totalAfter, delta: totalAfter - totalBefore },
+    });
+  }
+  return out;
+}
+
 function pickAmount(row) {
   return typeof row.amount === 'number' ? row.amount : 0;
+}
+
+function sectionTotal(sec) {
+  if (!sec) return 0;
+  if (typeof sec.total === 'number') return sec.total;
+  return 0;
 }
 
 function expectedDeltas(view, entry) {
