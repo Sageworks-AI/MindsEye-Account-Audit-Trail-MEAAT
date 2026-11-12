@@ -1,4 +1,0 @@
-npm test
-# pass: boundary OK; all node:test suites green, including the four new
-#       files test/layout.test.mjs, test/resolve.test.mjs, test/command.test.mjs.
-git add -A && git commit -m "S3: resolve layer (request, layout, tiers, plan, command)"
