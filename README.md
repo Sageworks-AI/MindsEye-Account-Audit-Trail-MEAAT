@@ -13,20 +13,25 @@ time, no credentials anywhere in the repo.
 ## Current status
 
 S0 is done. S1 to S4 are being brought to a green suite in nine stabilisation
-batches (B1 to B9). S5's C++ sources, ABI, CMake, parity and manifest tooling
-are **done at source level**; the wasm binary itself has not been built yet in
-this checkout, and is not required for `npm test` or for the JS twin to run.
-S6 onward has not been started.
+batches (B1 to B9). S5's space C++ sources, ABI, parity and manifest tooling
+are done at source level; the wasm binary is built locally and not required
+for `npm test`. S6's bridge (Measure Contract) is done. S7's attention JS
+twin, level table and W1–W10 workflows are done. S8's attention C++ sources,
+CMake, ABI, parity and manifest tooling, CSS emitter and CSS drift test are
+**done at source level**; `attention/dist/attention.wasm` is built locally
+and is not required for `npm test`.
 
 Only these commands work today: `npm install`, `npm test`, `npm run verify`,
 `npm run check-boundaries`, `npm run verify:space`, `npm run build:space`
-(requires Emscripten), `npm run test:cpp` (requires cmake + a compiler),
-`npm run gen:space-golden`. Everything else in `package.json` is a
-placeholder for a later stage.
+(Emscripten), `npm run test:cpp` (cmake + a compiler),
+`npm run gen:space-golden`, `npm run verify:attention`,
+`npm run build:attention` (Emscripten), `npm run gen:attention-golden`,
+`npm run emit:attention-css`, `npm run test:attention`. Everything else in
+`package.json` is a placeholder for a later stage.
 
 Longer documentation lives in the project wiki: architecture, module
-boundaries, ledger and cards, space layout engine, resolve layer, testing and
-guards, roadmap and conventions.
+boundaries, ledger and cards, space layout engine, resolve layer, attention
+brain, testing and guards, roadmap and conventions.
 
 ## Design in one page
 
@@ -35,52 +40,45 @@ guards, roadmap and conventions.
   stores its own date; it receives one. A **Tick** is `{ date, seq }` so two
   entries on the same day still have a total order.
 - **Three brains, one bridge.**
-  - **Ledger brain** (`core/`, `store/`) — decides *what* is shown: which
-    numbers, rows and checks.
-  - **Space brain** (`space/`) — decides *how much room* each thing takes and
-    *where* it sits. It sees only counts, formatted strings (for measuring),
-    enumerations, and integers; never money values or ledger objects.
-  - **Attention brain** (`attention/`) — decides *appearance order*: which
-    pane is focus / near / far. Appearance only; geometry comes from the
-    space brain.
+  - **Ledger brain** (`core/`, `store/`) — decides *what* is shown.
+  - **Space brain** (`space/`) — decides *how much room* and *where*.
+  - **Attention brain** (`attention/`) — decides *appearance order*.
   They meet **only** in `bridge/`. `core/` never imports `space/`, `bridge/`,
-  `attention/`, `store/`, `sequencer/`, `server/` or `view/`. `space/` imports
-  nothing outside `space/`. `attention/` imports nothing outside `attention/`.
+  `attention/`, `store/`, `sequencer/`, `server/` or `view/`. `space/` and
+  `attention/` import nothing outside their own folders. `bridge/` may
+  import `core/schema.mjs` **only** from `core/`.
   See `scripts/check-boundaries.mjs` for the enforced matrix.
 - **Determinism.** Same journal and same request always produce byte-identical
   cards, hashes and SVG. Wall-clock timestamps exist only on Sequencer events.
-  No randomness or wall-clock inside core, resolve, space, view, or attention.
-- **No floats.** Money is an integer in minor units (default BWP, thebe,
-  100 per pula). Currency, symbol and exponent come from a config object.
-  Geometry is int64 **centipoints** (1 cpt = 1/100 pt; 1 CSS px = 75 cpt).
-- **Append-only journal.** Corrections are reversal entries: a mirror entry
-  with a `reverses` field pointing at the original seq. No edit, no delete,
-  no public mutable array.
-- **The Journal is the only source of financial truth.** Sequencer events and
-  cached cards are derived or advisory. Nothing financial is ever read back
-  from events.
-- **No number reaches the screen except from a card builder.** The command
-  box and any AI interpretation layer produce validated requests only; they
-  never compute numbers and never post an entry without explicit human
-  confirmation.
-- **Every card carries checks.** A failing check is visible on the card and
-  makes `npm run report` exit non-zero.
+- **No floats.** Money is an integer in minor units. Geometry is int64
+  **centipoints** (1 cpt = 1/100 pt; 1 CSS px = 75 cpt).
+- **Append-only journal.** Corrections are reversal entries.
+- **The Journal is the only source of financial truth.**
+- **No number reaches the screen except from a card builder.**
+- **Every card carries checks.** A failing check makes `npm run report` exit
+  non-zero.
 
 ## Running
 
 Works today (needs Node 20 or newer):
 npm install
-npm test # node:test suites + boundary check + verify:space
+npm test # node:test suites + boundary + verify:space + verify:attention
 npm run check-boundaries
-npm run verify:space # manifest check (prints a notice if no wasm built)
+npm run verify:space # notice if no wasm built
+npm run verify:attention
+npm run emit:attention-css
 npm run verify # verifies data/journal.jsonl hash chain
 
+text
 
 Optional, requires a C++ toolchain:
 npm run build:space # Emscripten -> space/dist/space.wasm + manifest.json
-npm run test:cpp # cmake + native tests (skipped without tools)
-npm run gen:space-golden # regenerate golden vectors from the JS twin ABI
+npm run build:attention # Emscripten -> attention/dist/attention.wasm + manifest.json
+npm run test:cpp # cmake + native tests (space and attention; skipped without tools)
+npm run gen:space-golden
+npm run gen:attention-golden
 
+text
 
 Available once the later stages are built (S11 to S13):
 npm run report
@@ -88,7 +86,7 @@ npm run dev
 npm start
 npm run demo
 
-
+text
 
 `npm test` and `npm run report` use the JS twin and, when present, the
 committed wasm. Neither requires a C++ toolchain or Python.
@@ -100,7 +98,7 @@ sequencer/ events, lanes, buckets, log, strip
 resolve/ request, layout, tiers, plan, command, dates
 view/ pure SVG builders (text, theme, primitives, slip, impact, trail, strip)
 space/ JS twin, C++ sources, reference data, wasm
-attention/ JS twin, C++ sources, level table, wasm, CSS emitter
+attention/ JS twin, C++ sources, level table, wasm, CSS emitter, cli
 bridge/ schema.mjs, measure.mjs, attention.mjs, contract.md
 server/ node:http, router, routes, sse, errors
 app/ Vite + React client (mounts only; drawing is from view/)
@@ -108,9 +106,11 @@ demo/ demo.ledger.mjs, report.mjs
 conductor/ Python 3.10+ (build-time only); workflows, choreographies, fuzz
 test/ node:test suites
 scripts/ check-boundaries, verify-journal, build-space, test-cpp,
-verify-space, gen-space-golden, verify-attention, emit-attention-css
+verify-space, gen-space-golden, build-attention, verify-attention,
+gen-attention-golden, emit-attention-css, test-cpp-attention
 data/ runtime only (gitignored): journal.jsonl, events.jsonl, trails/, cards-cache.json
 
+text
 
 The server binds `127.0.0.1` only. There is **no authentication in v1** — that
 is a known limit; do not expose this server on a public interface.
@@ -119,177 +119,153 @@ is a known limit; do not expose this server on a public interface.
 
 Precedence: base specification (Part 1) > Addendum A (space layer) > Addendum B
 (attention layer). Every conflict and every deliberate choice is recorded below.
-An extension that A or B needs to make a feature reachable is allowed and noted.
 
-1. **`app` import rules.** Base says *"app imports view and its own api.js
-   only."* Addendum A says *"app imports resolve, view and bridge."* Addendum B
-   gives `app/src/attention/` its own driver, hook and player files. **Strict
-   base reading would make the space and attention layers unreachable from
-   the client, defeating A and B.** Resolution: app may import `view`,
-   `resolve`, `space`, `attention`, `bridge`, its own files, and
-   `react` / `react-dom` / `vite` / `@vitejs/plugin-react` as bare packages.
-   `app/src/attention/` is further restricted to `attention`, `bridge` and its
-   own files (per B).
+1. **`app` import rules.** App may import `view`, `resolve`, `space`,
+   `attention`, `bridge`, its own files, and `react` / `react-dom` / `vite` /
+   `@vitejs/plugin-react`. `app/src/attention/` is restricted to `attention`,
+   `bridge` and its own files.
 
-2. **`.gitignore` and the wasm binaries.** Base says `.gitignore` includes
-   `dist`. Addendum A says the wasm is *committed* so a fresh clone needs no
-   C++ toolchain. Resolution: ignore `app/dist/` (Vite output) and
-   `build/`/`cmake-build-*/`, but **commit** `space/dist/` and
-   `attention/dist/`. Also commit `conductor/out/` (per Addendum B).
+2. **`.gitignore` and the wasm binaries.** `space/dist/` and
+   `attention/dist/` are committed; `app/dist/` and native build directories
+   are not.
 
-3. **Python conductor is build-time only.** Base requires "one command to
-   run" and "no cloud, no credentials." Addendum B adds a Python conductor.
-   Resolution: Python 3.10+ is optional; `npm test` and `npm run report` use
-   committed choreographies and never invoke Python. `npm run conduct` is
-   opt-in and requires Python + a C++ compiler.
+3. **Python conductor is build-time only.** Python 3.10+ is optional;
+   `npm test` and `npm run report` never invoke Python.
 
-4. **Voice adapter default = none.** Addendum B notes that browser speech may
-   use a remote service, breaking the enclosed rule. Resolution: default
-   adapter is `none`. Enabling it is a user opt-in.
+4. **Voice adapter default = none.**
 
-5. **View purity vs importing `space`.** Base says view functions are pure
-   `(card data, rect, tier, theme) -> SVG string`. Addendum A says view may
-   import `bridge` and `space`. Resolution: view stays deterministic; any
-   use of `space` is for pure measurements (fixed-point text width, wrap).
-   No state leaks.
+5. **View purity vs importing `space`.** View stays deterministic; any use
+   of `space` is for pure measurements.
 
-6. **`npm test` scope.** Base says node:test + boundary check. Addendum A
-   adds space laws and parity; Addendum B adds attention laws, workflow
-   goldens, CSS drift, static scans. Resolution: `npm test` runs the union;
-   no base coverage is dropped.
+6. **`npm test` scope** = base node:test + boundary + space laws/parity +
+   attention laws/workflows/CSS drift + verify:space + verify:attention.
 
-7. **`data/`, `out/`, `.env`.** All gitignored. `data/` is runtime only;
-   `out/` is report output recreated by `npm run report`.
+7. **`data/`, `out/`, `.env`.** All gitignored.
 
-8. **Centipoint scale.** 1 cpt = 1/100 pt. 1 CSS px = 75 cpt. Paper sizes in
-   points use conventional PDF roundings (A4 = 595×842 pt). Aspect ratios are
-   exact rationals built from those integers. Documented further in
-   `space/README.md` (S4) and `space/ABI.md` (S5).
+8. **Centipoint scale** (1 cpt = 1/100 pt, 1 CSS px = 75 cpt).
 
-9. **Reference defaults for `space/reference/documents.json`.** Margins
-   ~20 mm (57 pt), body 10 pt, headings 12–14 pt, captions 8 pt, leading 1.2×
-   body. These are reference defaults, not legal or regulatory standards.
+9. **Reference defaults** in `space/reference/documents.json` are not legal
+   or regulatory standards.
 
-10. **`DISPLAY_MAX` and the "in thousands" switch.** When a formatted amount
-    exceeds `DISPLAY_MAX` characters, the card deterministically switches to
-    "in thousands" and states this in the page header.
+10. **`DISPLAY_MAX`** switches long amounts to "in thousands".
 
-11. **`MIN_BODY = 9 px` (675 cpt).** Effective on-screen body size must be at
-    least 9 px, or the solver rejects the shape or tier.
+11. **`MIN_BODY = 9 px` (675 cpt)** — the solver rejects anything smaller.
 
-12. **Focus tolerance = 4 px (300 cpt).** Anchor invariance: after a relayout,
-    the anchor stays within 4 px of its previous screen position (or inside
-    the new rect). Documented in `space/ABI.md` (S5).
+12. **Focus tolerance = 4 px (300 cpt)**.
 
 13. **Attention level formula.** `level = min(rank, 2)`; ranks above 2 all
-    render at level 2. Default level table and timings ship in
-    `attention/dist/levels.json` (S7/S8). Contrast floors: 7:1 / 4.5:1 / 3:1
-    for levels 0 / 1 / 2. See `attention/LAWS.md`.
+    render at level 2. Default level table ships in
+    `attention/dist/levels.json`. Contrast floors: 7:1 / 4.5:1 / 3:1 for
+    levels 0 / 1 / 2. See `attention/LAWS.md`.
 
 14. **Pointer dwell = 250 ms.** Measured in JS; the C++ attention machine is
-    time-free and receives only the resulting `FOCUS` event.
+    time-free.
 
-15. **"Focus stays at center."** Addendum B says *"the viewport center C
-    always lies inside the focal pane."* Interpreted as: viewport center
-    inside the focal rect, and the anchor point (default page center) stays
-    within tolerance (see #12).
+15. **"Focus stays at center."** Viewport center inside the focal rect;
+    anchor point stays within tolerance.
 
-16. **Python ctypes fallback.** Addendum B says Python uses `ctypes` to the
-    native library, or falls back to a Node subprocess over stdin/stdout
-    JSON. Both paths must produce byte-identical results.
+16. **Python ctypes fallback.** Both paths produce byte-identical results.
 
-17. **`npm run dev` on Windows.** Uses `concurrently`. If it misbehaves on
-    Windows, run `node --watch server/index.mjs` and
-    `npx vite --config app/vite.config.js` in two terminals.
+17. **`npm run dev` on Windows.** Uses `concurrently`; fall back to two
+    terminals if needed.
 
-18. **Node version.** `engines.node >= 20` as stated in the base layout.
+18. **Node version.** `engines.node >= 20`.
 
-19. **Boundary-check enforcement.** The matrix enforced by
-    `scripts/check-boundaries.mjs` reflects the *union* of import rules
-    across the three spec parts, with base restrictions relaxed per #1.
-    `core/` is still restricted to `node:*` plus its own relative imports;
-    `space/` and `attention/` are self-contained. Scoped bare specifiers are
-    matched by package name.
+19. **Boundary-check enforcement.** Union of import rules across the three
+    spec parts; scoped bare specifiers matched by package name.
 
-20. **Git tracking policy.** `.gitattributes` pins LF line endings and marks
-    `*.wasm` as binary. The wasm commit decision itself is #2.
+20. **Git tracking policy.** `.gitattributes` pins LF; wasm marked binary.
 
-21. **License.** MIT. See `LICENSE`. This project builds on ideas and a
-    client skeleton from MindsEye (MIT, (c) 2025 Peace Thabiwa).
+21. **License.** MIT. See `LICENSE`.
 
-22. **Three-pane rule (60 percent).** In a three-pane layout the focal pane
-    takes 60 percent of the long axis and the other two share 40 percent.
-    Pane weights choose the large pane (ties to the lowest index) and split
-    the two small panes. Implemented in `resolve/layout.mjs`.
+22. **Three-pane rule (60 percent).** Focal pane takes 60 percent of the
+    long axis; the other two share 40 percent. Implemented once in
+    `space/js/templates.mjs` and mirrored in `space/cpp/templates.hpp`;
+    `resolve/layout.mjs` delegates to the twin.
 
-23. **Narrower QUARTER and STRIP pages.** For archetypes whose FULL page is
-    wider than 420 pt, QUARTER is 420 pt wide and STRIP is 360 pt wide, so
-    body text stays at or above `MIN_BODY` in a pane at 1280x720. `MIN_BODY`
-    itself is not lowered.
+23. **Narrower QUARTER and STRIP pages** so body text stays above
+    `MIN_BODY` at 1280x720.
 
-24. **Schema route for `resolve`.** `resolve/` must not import `core/` or
-    `store/`. Card type data reaches it through `bridge/schema.mjs`, which
-    re-exports `core/schema.mjs` (plain data, no imports). The boundary
-    checker enforces this at file level.
+24. **Schema route for `resolve`.** `bridge/` may import `core/schema.mjs`
+    only from `core/`.
 
-25. **`resolve/dates.mjs` mirrors `core/time.mjs`.** The pure date helpers
-    are copied so `resolve/` stays off `core/`. A parity test keeps the two
-    identical on seeded inputs.
+25. **`resolve/dates.mjs` mirrors `core/time.mjs`.**
 
-26. **`plan()` takes its cache-key function from the caller.** Callers pass
-    `CardStore.cacheKey` as `opts.cacheKey`. `plan()` returns an error if it
-    is missing.
+26. **`plan()` takes its cache-key function from the caller.**
 
-27. **Copyright line in `LICENSE`.** The owner changed it on purpose and it
-    is never edited by tooling. The scaffold test checks only its structure
-    (starts with `MIT License`, has a year and a name), not the name itself.
+27. **Copyright line in `LICENSE`.** Structure-only check in scaffold test.
 
-28. **L7 and L8 arrive in S6.** The two space laws that involve the bridge
-    are tested when `bridge/` is built.
+28. **L7 and L8 tested in `bridge/` tests.**
 
-29. **Constancy guards.** Three guards keep earlier stages stable while
-    later ones are built: a stage manifest (`scripts/stages.json`) checked
-    against the status table below, an API-surface snapshot of the public
-    modules, and golden outputs (demo card hashes and layout rectangles).
-    Golden files change only on purpose, by running `npm run golden:update`
-    and committing the result. They are never edited by hand.
+29. **Constancy guards.** Stage manifest, API surface snapshot, golden
+    outputs.
 
-30. **Portable 128-bit arithmetic.** `space/cpp/fixed.hpp` implements
-    64×64→128 multiply and 128÷64 divide from 64-bit limbs, without
-    `__int128`, compiler builtins, or floating point. The same source
-    compiles under MSVC, MinGW, clang, gcc and Emscripten. `muldiv_floor`
-    does floor rounding on the sign-corrected magnitude, then reapplies the
-    sign, matching `space/js/fixed.mjs` exactly (parity is golden-tested).
+30. **Portable 128-bit arithmetic** in `space/cpp/fixed.hpp`.
 
-31. **Golden vectors.** The C++ ABI's parity with the JS twin is enforced
-    by line-based text vectors in `space/cpp/test/golden/`, generated by
-    `scripts/gen-space-golden.mjs` using `space/js/abi.mjs` as the oracle.
-    The native test runner replays them; `test/space/parity.test.mjs` also
-    replays them against the JS twin, so both ends are checked
-    independently. Golden files change only when the twin changes on
-    purpose and `npm run gen:space-golden` is run to regenerate them.
+31. **Golden vectors.** `space/cpp/test/golden/` and
+    `attention/cpp/test/golden/` regenerated by `gen:*` scripts.
 
-32. **CRLF-normalised hashing.** `space/dist/manifest.json` stores SHA-256
-    of every C++ source with `\r\n` normalised to `\n` before hashing, so a
-    Windows checkout and a Unix checkout produce the same hash for the same
-    logical source. `scripts/verify-space.mjs` applies the same
-    normalisation, so "rebuild required" fires only on a real change.
+32. **CRLF-normalised hashing** for both `space` and `attention` manifests.
 
-33. **Standalone wasm.** `scripts/build-space.mjs` builds with
-    `-sSTANDALONE_WASM=1 -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=4MiB
-    -sWASM_BIGINT=1 --no-entry`. No JS runtime is generated: the module
-    exports the C ABI functions, the memory, and the scratch pointer
-    directly. `space/index.mjs` loads the bytes synchronously and its
-    `getWasmBackend()` helper marshals typed arrays through
-    `BigInt64Array`, which the golden vectors and parity tests exercise.
+33. **Standalone wasm.** Both builds use `--no-entry -sSTANDALONE_WASM=1`.
 
-34. **Empty `space/dist/`.** A fresh clone has no `space/dist/space.wasm`
-    and no `space/dist/manifest.json`. `npm test` still passes: the JS twin
-    is authoritative, `verify:space` prints "no wasm built yet, JS twin in
-    use" and exits 0, and wasm-specific parity assertions skip. A developer
-    who wants the second implementation runs `npm run build:space` with
-    Emscripten installed and commits both files; `space/dist/.gitkeep`
-    keeps the directory present either way.
+34. **Empty `space/dist/` and `attention/dist/`.** `npm test` passes with
+    no wasm; `verify:*` prints a notice and exits 0.
+
+35. **`MAX_ENTRY_LINES = 32`.**
+
+36. **px derivation rule.** Edge-flooring keeps px rects disjoint.
+
+37. **Bridge event drafts.** Turned into events by
+    `sequencer.events.eventFromDraft`.
+
+38. **`resolve/` delegates to `space/` and `bridge/`.**
+
+39. **Focal weights coerce to 1.**
+
+40. **Attention state shape.** `state = { ring, history, input, transfer,
+    lastPointerEpoch }`.
+
+41. **Anti-oscillation epoch.** Stale pointer FOCUS is rejected.
+
+42. **Transfer matrix.** Enforced in `attention/js/machine.mjs` and
+    `attention/cpp/machine.hpp`. `TRANSFER_COPY` requires at least two
+    non-BAR actors. Invalid (payloadKind, targetKind, outcomeKind) triples
+    are TRANSFER_INVALID.
+
+43. **Level-2 opacity is 760** so both the normal (3:1) and prefers-contrast
+    (4.5:1) floors pass.
+
+44. **Keyboard shortcuts (S13).** Driver wires pointer dwell, Tab/F6
+    cycling, Ctrl/Cmd+K focus-input, Ctrl/Cmd+C/V transfer, Escape BACK.
+
+45. **`attention/cli.mjs` line protocol.** JSON line in, JSON line out.
+    Three ops: `step`, `frame`, `levels`.
+
+46. **Shadow and radius are centipoints** in `levels.json`, not permille.
+    The JS ABI and C++ ABI both accept `0..100000` for these two fields
+    (matching the shipped values `shadow: 1800`, `radius: 1050`).
+    `opacity`, `brightness`, `saturation` and `blur` stay at permille
+    `0..1000`. `S7`'s validation (`attention/js/levels.mjs`) also accepts
+    these wider ranges.
+
+47. **Attention ABI version is 1.** `att_version()` returns 1; a mismatch
+    is `E_BAD_VERSION`. Same rule as `space` ABI.
+
+48. **`emit_state` emits the transfer's `sourceId` as a length-prefixed
+    code-point array, no kind.** `emit_actor` adds a kind slot; `emit_id`
+    does not. Mixing them caused a byte desync in the first draft; fixed
+    and the golden vectors cover it.
+
+49. **CSS emission is byte-stable.** `attention/emitCss.mjs` sorts keys,
+    uses fixed formatting, and carries the SHA-256 of `levels.json` in the
+    header. `app/src/styles/attention.css` is committed; drift is caught by
+    `test/attention/css-drift.test.mjs`.
+
+50. **Static scan for hand-written appearance values.** Any `.css` under
+    `app/src/` other than `attention.css` and `tokens.css` that mentions
+    `opacity`, `brightness`, `saturate`, `blur`, `filter` or `shadow` as
+    a property fails the CSS drift test.
 
 ## Status by stage
 
@@ -301,9 +277,9 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 | S3 | `resolve/` | stabilising |
 | S4 | `space/` JS twin + reference data | stabilising |
 | S5 | `space/` C++ + wasm + parity | **sources done, wasm pending local build** |
-| S6 | `bridge/` | pending |
-| S7 | `attention/` JS twin + level table | pending |
-| S8 | `attention/` C++ + wasm + CSS emitter | pending |
+| S6 | `bridge/` | **done** |
+| S7 | `attention/` JS twin + level table | **done** |
+| S8 | `attention/` C++ + wasm + CSS emitter | **sources done, wasm pending local build** |
 | S9 | `conductor/` (Python) | pending |
 | S10 | `view/` SVG renderers + snapshots | pending |
 | S11 | demo ledger + `npm run report` | pending |
@@ -312,11 +288,9 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 | S14 | Final integration, README final pass, DoD checklist | pending |
 
 S1 to S4 change from *stabilising* to **done** when the stabilisation batches
-pass (`npm test`: 0 failures, `boundary check: OK`). S5's row means the C++
-sources, CMake, ABI, parity tests and manifest tooling are complete; the
-`space/dist/space.wasm` binary itself is built on the developer's machine
-via `npm run build:space` and committed afterwards, and is not required for
-`npm test` to pass.
+pass. S5 and S8 rows mean the C++ sources, CMake, ABI, parity tests, manifest
+tooling and CSS emitter are complete; the `.wasm` binaries are built locally
+by the developer and not required for `npm test`.
 
 ## Known limitations (v1)
 
@@ -333,3 +307,22 @@ via `npm run build:space` and committed afterwards, and is not required for
 
 MIT. See `LICENSE`. This project builds on ideas and a client skeleton from
 MindsEye (MIT, (c) 2025 Peace Thabiwa).
+RUN:
+
+text
+npm test
+node scripts/verify-attention.mjs
+node scripts/emit-attention-css.mjs --force
+node scripts/test-cpp-attention.mjs
+# pass: boundary check: OK; all node:test suites green including the four
+#       new attention tests (parity, abi-fuzz, manifest, css-drift);
+#       verify:space and verify:attention print
+#       "no wasm built yet, JS twin in use"; emit:attention-css rewrites
+#       app/src/styles/attention.css and reports "wrote"; test-cpp-attention
+#       either runs the native suite or skips with a notice.
+# then, if you have Emscripten:
+npm run build:attention
+npm run gen:attention-golden
+npm run test:cpp
+npm run verify:attention
+git add -A && git commit -m "S8: attention C++, ABI, parity and CSS emitter"
