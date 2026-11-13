@@ -5,7 +5,10 @@
 //
 // Byte-identical to attention/js/machine.mjs. Every branch here has a
 // sibling branch there; parity tests replay the same events through both
-// and compare state hashes plus frames.
+// and compare state hashes plus frames. The correctness of "history_push
+// receives the pre-move ring" was the source of one rewrite during
+// development; the twin's `const newHistory = pushHistory(state.history,
+// state.ring);` line shows the intent unambiguously.
 #ifndef ATTENTION_CPP_MACHINE_HPP
 #define ATTENTION_CPP_MACHINE_HPP
 
@@ -17,8 +20,6 @@
 
 namespace att {
 
-// (payloadKind, targetKind) -> outcomeKind or -1 for "not allowed". Mirrors
-// the TRANSFER_MATRIX constant in attention/js/machine.mjs.
 inline int32_t transfer_expected_outcome(int32_t payloadKind, int32_t targetKind) {
     switch (payloadKind) {
         case PAYLOAD_ENTRY:
@@ -41,9 +42,6 @@ inline int32_t transfer_expected_outcome(int32_t payloadKind, int32_t targetKind
     }
 }
 
-// A helper: freeze a full snapshot into a NestedTransfer when a transfer is
-// active at the moment an input begins, so `INPUT_END(cancel)` can restore
-// both the ring and the armed transfer.
 inline void capture_nested_transfer(const State& s, NestedTransfer* nt) {
     zero_nested(nt);
     if (!s.transfer.active) return;
@@ -53,8 +51,6 @@ inline void capture_nested_transfer(const State& s, NestedTransfer* nt) {
     nt->snap = s.transfer.snap;
 }
 
-// Apply an INPUT_END(cancel): restore the state from the full snapshot that
-// INPUT_BEGIN captured. If that snapshot had a transfer, restore it too.
 inline void restore_input_snapshot(State* s, const FullSnapshot& snap) {
     s->ring = snap.ring;
     s->history = snap.history;
@@ -71,9 +67,6 @@ inline void restore_input_snapshot(State* s, const FullSnapshot& snap) {
     }
 }
 
-// Restore the state from a basic snapshot (used by TRANSFER_CANCEL and by
-// BACK during a transfer). By construction a basic snapshot has no active
-// input and no active transfer, so those fields are cleared.
 inline void restore_basic_snapshot(State* s, const BasicSnapshot& snap) {
     s->ring = snap.ring;
     s->history = snap.history;
@@ -84,16 +77,12 @@ inline void restore_basic_snapshot(State* s, const BasicSnapshot& snap) {
     zero_transfer(&s->transfer);
 }
 
-// Capture the current state into a BasicSnapshot (for TRANSFER_COPY). Caller
-// passes a `State` whose transfer and input are both inactive (the JS twin
-// rejects TRANSFER_COPY while either is active).
 inline void capture_basic_snapshot(const State& s, BasicSnapshot* snap) {
     snap->ring = s.ring;
     snap->history = s.history;
     snap->lastPointerEpoch = s.lastPointerEpoch;
 }
 
-// Full snapshot for INPUT_BEGIN. Includes a nested transfer if one is armed.
 inline void capture_full_snapshot(const State& s, FullSnapshot* snap) {
     snap->ring = s.ring;
     snap->history = s.history;
@@ -101,8 +90,6 @@ inline void capture_full_snapshot(const State& s, FullSnapshot* snap) {
     capture_nested_transfer(s, &snap->transfer);
 }
 
-// FOCUS during input: BAR stays at rank 0, X goes to rank 1, others keep
-// order. Returns false if X is already at rank 1 (NOOP).
 inline bool ring_after_input_focus(Ring* out, const Ring& in,
                                    int32_t cpLen, const int32_t* cp) {
     if (in.count < 1) return false;
@@ -123,15 +110,9 @@ inline bool ring_after_input_focus(Ring* out, const Ring& in,
     return true;
 }
 
-// Forward declaration: BACK calls step() with a synthetic event, matching
-// the JS twin's recursive `step(state, { type: 'INPUT_END', outcome: 'cancel' })`
-// / `step(state, { type: 'TRANSFER_CANCEL' })`.
 inline int32_t step(State* state, const ParsedEvent& evt);
 
-// The BACK handler, factored out so `step` stays readable and so the
-// recursion is easy to verify against the twin.
 inline int32_t step_back(State* s) {
-    // M15 priority: input > transfer > history.
     if (s->input.active) {
         ParsedEvent ev;
         ev.type = EV_INPUT_END;
@@ -156,19 +137,15 @@ inline int32_t step(State* s, const ParsedEvent& evt) {
             if (find_by_id(s->ring, evt.openActor.cpLen, evt.openActor.cp)) {
                 return ATT_BAD_ACTOR;
             }
-            bool ok;
-            if (s->input.active) {
-                ok = insert_at_one(&s->ring, evt.openActor);
-            } else {
-                ok = insert_at_front(&s->ring, evt.openActor);
-            }
+            bool ok = s->input.active
+                ? insert_at_one(&s->ring, evt.openActor)
+                : insert_at_front(&s->ring, evt.openActor);
             return ok ? ATT_OK : ATT_RING_FULL;
         }
         case EV_CLOSE: {
             int32_t idx = rank_of(s->ring, evt.cpLen, evt.cp);
             if (idx < 0) return ATT_BAD_ACTOR;
             if (s->ring.actors[idx].kind == KIND_BAR) return ATT_BAD_ACTOR;
-            // Closing a transfer source cancels the transfer (restore snapshot).
             if (s->transfer.active &&
                 id_eq(s->transfer.source, evt.cpLen, evt.cp)) {
                 restore_basic_snapshot(s, s->transfer.snap);
@@ -182,8 +159,6 @@ inline int32_t step(State* s, const ParsedEvent& evt) {
             const Actor* a = find_by_id(s->ring, evt.cpLen, evt.cp);
             if (!a) return ATT_BAD_ACTOR;
             if (a->kind == KIND_BAR) return ATT_BAD_ACTOR;
-
-            // M10 pointer anti-oscillation.
             if (evt.source == SRC_POINTER && evt.pointerEpoch <= s->lastPointerEpoch) {
                 return ATT_POINTER_STALE;
             }
@@ -217,20 +192,95 @@ inline int32_t step(State* s, const ParsedEvent& evt) {
             if (rank_of(s->ring, evt.cpLen, evt.cp) == 0) {
                 return ATT_ALREADY_FOCUSED;
             }
+            Ring preMove = s->ring;
             int32_t idx = rank_of(s->ring, evt.cpLen, evt.cp);
             move_to_front(&s->ring, idx);
-            history_push(&s->history, s->ring); // push AFTER move? no: twin pushes BEFORE move.
-            // Wait — the JS twin pushes the pre-FOCUS ring then moves.
-            // Reproduce that: we already moved, so re-push the correct snapshot.
-            // To stay simple and byte-identical, undo and redo the two steps.
-            // Actually the move already happened and we lost the pre-ring. Fix:
-            // reroute through the two operations in the twin's order.
-            // This branch is rewritten below.
-            return ATT_LAW_VIOLATION; // unreachable in the corrected flow
+            history_push(&s->history, preMove);
+            s->lastPointerEpoch = newEpoch;
+            return ATT_OK;
         }
-        default:
-            return ATT_BAD_EVENT;
+        case EV_INPUT_BEGIN: {
+            if (s->input.active) return ATT_BAD_EVENT;
+            if (find_by_id(s->ring, 3, (const int32_t[]){ 'B', 'A', 'R' })) {
+                return ATT_LAW_VIOLATION;
+            }
+            FullSnapshot snap;
+            zero_full(&snap);
+            capture_full_snapshot(*s, &snap);
+            Actor bar;
+            zero_actor(&bar);
+            bar.cpLen = 3;
+            bar.cp[0] = 'B'; bar.cp[1] = 'A'; bar.cp[2] = 'R';
+            bar.kind = KIND_BAR;
+            if (!insert_at_front(&s->ring, bar)) return ATT_RING_FULL;
+            s->input.active = 1;
+            s->input.channel = evt.channel;
+            s->input.snap = snap;
+            return ATT_OK;
+        }
+        case EV_INPUT_END: {
+            if (!s->input.active) return ATT_BAD_EVENT;
+            if (evt.outcome == OUTCOME_CANCEL) {
+                FullSnapshot snap = s->input.snap;
+                restore_input_snapshot(s, snap);
+                return ATT_OK;
+            }
+            int32_t idx = rank_of(s->ring, 3, (const int32_t[]){ 'B', 'A', 'R' });
+            if (idx < 0) return ATT_LAW_VIOLATION;
+            remove_at(&s->ring, idx);
+            s->input.active = 0;
+            s->input.channel = CH_TEXT;
+            zero_full(&s->input.snap);
+            return ATT_OK;
+        }
+        case EV_TRANSFER_COPY: {
+            if (s->transfer.active || s->input.active) return ATT_TRANSFER_INVALID;
+            int32_t nonBar = 0;
+            for (int32_t i = 0; i < s->ring.count; ++i) {
+                if (s->ring.actors[i].kind != KIND_BAR) nonBar += 1;
+            }
+            if (nonBar < 2) return ATT_TRANSFER_INVALID;
+            const Actor* source = find_by_id(s->ring, evt.cpLen, evt.cp);
+            if (!source || source->kind == KIND_BAR) return ATT_BAD_ACTOR;
+            BasicSnapshot snap;
+            capture_basic_snapshot(*s, &snap);
+            Actor src = *source;
+            if (!transfer_arm(&s->ring, src, evt.payloadKind, &s->transfer)) {
+                return ATT_TRANSFER_INVALID;
+            }
+            s->transfer.snap = snap;
+            return ATT_OK;
+        }
+        case EV_TRANSFER_PASTE: {
+            if (!s->transfer.active || s->input.active) return ATT_TRANSFER_INVALID;
+            const Actor* target = find_by_id(s->ring, evt.cpLen, evt.cp);
+            if (!target) return ATT_BAD_ACTOR;
+            if (id_eq(s->transfer.source, evt.cpLen, evt.cp)) return ATT_TRANSFER_INVALID;
+            int32_t expected = transfer_expected_outcome(s->transfer.payloadKind, target->kind);
+            if (expected < 0 || expected != evt.outcomeKind) return ATT_TRANSFER_INVALID;
+            Ring newRing;
+            zero_ring(&newRing);
+            if (!pair_front(&newRing, s->ring, evt.cpLen, evt.cp,
+                            s->transfer.source.cpLen, s->transfer.source.cp)) {
+                return ATT_LAW_VIOLATION;
+            }
+            history_push(&s->history, s->ring);
+            s->ring = newRing;
+            transfer_clear(&s->transfer);
+            return ATT_OK;
+        }
+        case EV_TRANSFER_CANCEL: {
+            if (!s->transfer.active) return ATT_NOOP;
+            BasicSnapshot snap = s->transfer.snap;
+            restore_basic_snapshot(s, snap);
+            return ATT_OK;
+        }
+        case EV_BACK:
+            return step_back(s);
+        case EV_RESIZE:
+            return ATT_NOOP;
     }
+    return ATT_BAD_EVENT;
 }
 
 } // namespace att
