@@ -21,7 +21,7 @@ every function reads and writes into a fixed scratch buffer of
 
 ## Return codes
 0 ATT_OK
-1 ATT_NOOP (BACK with nothing to undo; BACK on a FOCUS at rank 0)
+1 ATT_NOOP
 2 ATT_POINTER_STALE
 3 ATT_ALREADY_FOCUSED
 -1 ATT_BAD_ACTOR
@@ -31,6 +31,7 @@ every function reads and writes into a fixed scratch buffer of
 -5 ATT_LAW_VIOLATION
 -6 ATT_OVERFLOW
 -7 ATT_OUTPUT_TOO_SMALL
+
 
 ## Constants
 
@@ -64,47 +65,49 @@ Scratch buffer address and capacity in int64 slots.
 
 ### `att_levels_table(in_len) -> out_len | err`
 in = [ V, theme ] theme: 0=light, 1=dark
-out = [ V, 6*3 fields, 6 colors, 8 timing ]
--- per level 0..2: opacity, brightness, saturation, blur, shadow, radius
--- colors: fgR, fgG, fgB, bgR, bgG, bgB
--- timing: focusMs, inputBeginMs, inputEndMs, transferMs,
-x1, y1, x2, y2 (easing in permille)
+out = [ V, <18 level fields>, 6 color fields, 8 timing fields ]
+
+
+`<18 level fields>`: for level 0..2, then per level: `opacity, brightness,
+saturation, blur, shadow, radius`. Colors: `fgR, fgG, fgB, bgR, bgG, bgB`.
+Timing: `focusMs, inputBeginMs, inputEndMs, transferMs, x1, y1, x2, y2`
+(easing in permille).
 
 ### `att_validate(in_len) -> out_len | err`
-in = [ V, <levels table same shape as output above, minus V> ]
-out = [ V, code ] -- 0 for OK, negative for T1–T4 violation
+in = [ V, <18 level fields>, 6 color fields, 8 timing fields ]
+out = [ V, code ] -- 0 for OK, ATT_LAW_VIOLATION for T1–T4
+
+text
 
 ### `att_step(in_len) -> out_len | err`
 in = [ V, stateLen, <state>, eventLen, <event> ]
 out = [ V, code, outStateLen, <state>, frameLen, <frame> ]
 
-The `<state>` and `<event>` layouts are below. On any error, `outStateLen`
-is `0` and the input state is unchanged; the caller should reuse its
-previous state. On `NOOP`, `ALREADY_FOCUSED`, `POINTER_STALE`, the returned
-state is byte-identical to the input state (so a caller that ignores the
-return and keeps its state is still correct).
+
+On any error, `outStateLen` is `0` and the input state is unchanged; the
+caller should reuse its previous state. On `ATT_NOOP`, `ATT_ALREADY_FOCUSED`,
+`ATT_POINTER_STALE`, the returned state is byte-identical to the input state.
 
 ### `<state>`
 [ lastPointerEpoch,
-ringCount, per actor: idCpLen, cp_0..cp_(idCpLen-1), kindInt,
-histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
-transferActive, [if active: sourceIdCpLen, cps..., payloadKindInt, <basicSnapshot>],
+<ring>,
+<history>,
+transferActive, [if active: sourceIdCpLen, cp..., payloadKindInt, <basicSnapshot>],
 inputActive, [if active: channelInt, <fullSnapshot>] ]
 
-`<basicSnapshot>` (what a transfer's snapshot holds — pre-arm state, always
-has no transfer):
-[ ringCount, per actor: idCpLen, cp..., kindInt,
-histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
-lastPointerEpoch ]
 
-`<fullSnapshot>` (what an input's snapshot holds — may contain a transfer):
-[ ringCount, per actor: idCpLen, cp..., kindInt,
-histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
-lastPointerEpoch,
-transferActive, [if active: sourceIdCpLen, cp..., payloadKindInt, <basicSnapshot>] ]
-[ ringCount, per actor: idCpLen, cp..., kindInt,
-histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
-lastPointerEpoch,
+
+`<ring>` = `[ ringCount, per actor: idCpLen, cp..., kindInt ]`.
+`<history>` = `[ histDepth, per snapshot: <ring> ]`.
+
+`<basicSnapshot>` (used by a transfer's snapshot, which by construction has
+no active input and no nested transfer):
+[ <ring>, <history>, lastPointerEpoch ]
+
+
+`<fullSnapshot>` (used by an input's snapshot, which may hold an armed
+transfer):
+[ <ring>, <history>, lastPointerEpoch,
 transferActive, [if active: sourceIdCpLen, cp..., payloadKindInt, <basicSnapshot>] ]
 
 
@@ -138,9 +141,9 @@ for BAR.
 ## Baked level table
 
 `attention/cpp/levels.hpp` bakes the same numbers as
-`attention/dist/levels.json`. Light and dark themes are baked; `frame_out`
-uses light. `attention/marshal.mjs` bakes the same numbers into int64 for
-the JS ABI, and `test/attention/parity.test.mjs` verifies the two agree.
+`attention/dist/levels.json`. Light and dark themes are baked; `frame` uses
+light. `attention/marshal.mjs` bakes the same numbers into int64 for the JS
+ABI, and `test/attention/parity.test.mjs` verifies the two agree.
 
 ## Baked contrast LUT
 
