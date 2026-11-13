@@ -20,3 +20,137 @@ every function reads and writes into a fixed scratch buffer of
 - **Determinism.** Same inputs → same outputs, every platform.
 
 ## Return codes
+0 ATT_OK
+1 ATT_NOOP (BACK with nothing to undo; BACK on a FOCUS at rank 0)
+2 ATT_POINTER_STALE
+3 ATT_ALREADY_FOCUSED
+-1 ATT_BAD_ACTOR
+-2 ATT_BAD_EVENT
+-3 ATT_TRANSFER_INVALID
+-4 ATT_RING_FULL
+-5 ATT_LAW_VIOLATION
+-6 ATT_OVERFLOW
+-7 ATT_OUTPUT_TOO_SMALL
+
+## Constants
+
+- `ATT_MAX_ACTORS = 8`
+- `ATT_HISTORY_DEPTH = 16`
+- `ATT_MAX_ID_CP = 32` — a string actor id may be at most 32 code points
+- `ATT_SCRATCH_SLOTS = 65536` (512 KiB)
+
+## Actor kind and event-type integers (stable)
+
+Kinds: `0=DOC, 1=FORM, 2=TRAIL, 3=BAR`.
+
+Event types: `0=OPEN, 1=CLOSE, 2=FOCUS, 3=INPUT_BEGIN, 4=INPUT_END,
+5=TRANSFER_COPY, 6=TRANSFER_PASTE, 7=TRANSFER_CANCEL, 8=BACK, 9=RESIZE`.
+
+Focus sources: `0=pointer, 1=keyboard, 2=command, 3=programmatic`.
+Input channels: `0=text, 1=voice, 2=document`.
+Input outcomes: `0=commit, 1=cancel`.
+Payload kinds: `0=entry, 1=rows, 2=row, 3=period, 4=node`.
+Outcome kinds: `0=impact, 1=draft-entry, 2=draft-lines, 3=trail-edit, 4=period-change`.
+
+## Functions
+
+### `att_version() -> int64`
+
+Returns `1`. Does not touch scratch.
+
+### `att_scratch_ptr() -> int64` / `att_scratch_size() -> int64`
+
+Scratch buffer address and capacity in int64 slots.
+
+### `att_levels_table(in_len) -> out_len | err`
+in = [ V, theme ] theme: 0=light, 1=dark
+out = [ V, 6*3 fields, 6 colors, 8 timing ]
+-- per level 0..2: opacity, brightness, saturation, blur, shadow, radius
+-- colors: fgR, fgG, fgB, bgR, bgG, bgB
+-- timing: focusMs, inputBeginMs, inputEndMs, transferMs,
+x1, y1, x2, y2 (easing in permille)
+
+### `att_validate(in_len) -> out_len | err`
+in = [ V, <levels table same shape as output above, minus V> ]
+out = [ V, code ] -- 0 for OK, negative for T1–T4 violation
+
+### `att_step(in_len) -> out_len | err`
+in = [ V, stateLen, <state>, eventLen, <event> ]
+out = [ V, code, outStateLen, <state>, frameLen, <frame> ]
+
+The `<state>` and `<event>` layouts are below. On any error, `outStateLen`
+is `0` and the input state is unchanged; the caller should reuse its
+previous state. On `NOOP`, `ALREADY_FOCUSED`, `POINTER_STALE`, the returned
+state is byte-identical to the input state (so a caller that ignores the
+return and keeps its state is still correct).
+
+### `<state>`
+[ lastPointerEpoch,
+ringCount, per actor: idCpLen, cp_0..cp_(idCpLen-1), kindInt,
+histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
+transferActive, [if active: sourceIdCpLen, cps..., payloadKindInt, <basicSnapshot>],
+inputActive, [if active: channelInt, <fullSnapshot>] ]
+
+`<basicSnapshot>` (what a transfer's snapshot holds — pre-arm state, always
+has no transfer):
+[ ringCount, per actor: idCpLen, cp..., kindInt,
+histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
+lastPointerEpoch ]
+
+`<fullSnapshot>` (what an input's snapshot holds — may contain a transfer):
+[ ringCount, per actor: idCpLen, cp..., kindInt,
+histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
+lastPointerEpoch,
+transferActive, [if active: sourceIdCpLen, cp..., payloadKindInt, <basicSnapshot>] ]
+[ ringCount, per actor: idCpLen, cp..., kindInt,
+histDepth, per snapshot: ringCount, per actor: idCpLen, cp..., kindInt,
+lastPointerEpoch,
+transferActive, [if active: sourceIdCpLen, cp..., payloadKindInt, <basicSnapshot>] ]
+
+
+### `<event>`
+[ typeInt, payload... ]
+
+
+| type | payload |
+|---|---|
+| OPEN (0) | idCpLen, cp..., kindInt |
+| CLOSE (1) | idCpLen, cp... |
+| FOCUS (2) | idCpLen, cp..., sourceInt, [if source==0: pointerEpoch] |
+| INPUT_BEGIN (3) | channelInt |
+| INPUT_END (4) | outcomeInt |
+| TRANSFER_COPY (5) | sourceIdCpLen, cp..., payloadKindInt |
+| TRANSFER_PASTE (6) | targetIdCpLen, cp..., outcomeKindInt |
+| TRANSFER_CANCEL (7) | (nothing) |
+| BACK (8) | (nothing) |
+| RESIZE (9) | (nothing) |
+
+### `<frame>`
+[ actorCount,
+per actor: idCpLen, cp..., kindInt, rankInt, levelInt, docRankInt, slotInt,
+opacityInt, brightnessInt, saturationInt, blurInt, shadowInt, radiusInt ]
+
+
+Appearance values come from the *light* theme's level table (same as
+`frame(state, loadLevels())` in the JS twin). `docRank = -1` and `slot = -1`
+for BAR.
+
+## Baked level table
+
+`attention/cpp/levels.hpp` bakes the same numbers as
+`attention/dist/levels.json`. Light and dark themes are baked; `frame_out`
+uses light. `attention/marshal.mjs` bakes the same numbers into int64 for
+the JS ABI, and `test/attention/parity.test.mjs` verifies the two agree.
+
+## Baked contrast LUT
+
+`attention/cpp/contrast.hpp` bakes the 256-entry sRGB→linear LUT computed
+by `attention/js/contrast.mjs`. `att_validate` uses it. A parity test fuzzes
+`levelContrastPermille()` and asserts twin-vs-wasm agree to the last digit.
+
+## Error notes
+
+Every function validates the version word, lengths (`0 <= len <=
+ATT_SCRATCH_SLOTS/2`), all enum values, `idCpLen <= ATT_MAX_ID_CP`,
+`ringCount <= ATT_MAX_ACTORS`, `histDepth <= ATT_HISTORY_DEPTH`, and
+returns an error code rather than crashing.
