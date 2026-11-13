@@ -3,11 +3,16 @@
 // any byte invalidates every later entry. Views filter without mutating;
 // overlay appends an unposted draft for Input-mode preview.
 //
-// Corrected from the earlier PART 1 output: reverse() previously produced
-// mirror lines that carried BOTH debit and credit fields (one being 0),
-// which validateLine() rejects with "exactly one of debit/credit". The
-// mirror now carries exactly the non-zero field; validateLine normalises the
-// zero-field back in for the frozen entry.
+// validateLine() (S4-close): a stored line carries BOTH debit and credit
+// fields, one being 0. The rule is now: a side is "present" iff it is a
+// non-zero safe integer; exactly one side must be present. The other side
+// may be absent or 0. This keeps re-posting a stored entry byte-identical
+// while still rejecting {debit:5,credit:5}, {debit:0,credit:0}, negatives
+// and non-integers.
+//
+// LedgerView.byId() (S4-close): returns the entry with that id from the
+// view's own entries (overlay included), throws if absent. The receipt
+// builder and impact use it.
 
 import {
   DEFAULT_CURRENCY, addMinor, assertMinor,
@@ -24,8 +29,9 @@ function validateLine(line, byCode) {
   if (typeof account !== 'string' || !byCode[account]) {
     throw new Error(`unknown account: ${String(account)}`);
   }
-  // A stored (frozen) entry carries both fields with one of them 0, so a side
-  // counts as present only when it is non-zero. Re-posting stored lines works.
+  // A side counts as present only when it is a non-zero safe integer.
+  // A stored line carries both fields, one of which is 0; without this rule
+  // a journal reload would fail with "exactly one of debit/credit".
   const hasD = debit !== undefined && debit !== null && debit !== 0;
   const hasC = credit !== undefined && credit !== null && credit !== 0;
   if (hasD && hasC) throw new Error(`line on ${account}: exactly one of debit/credit`);
@@ -127,7 +133,6 @@ export class Ledger {
     return e;
   }
 
-  // Resolve a user-supplied reference: integer = seq, non-empty string = id.
   resolveRef(ref) {
     if (Number.isSafeInteger(ref) && ref >= 1) return this.getEntry(ref);
     if (typeof ref === 'string' && ref.length > 0) return this.byId(ref);
@@ -157,9 +162,8 @@ export class Ledger {
     if (typeof memo !== 'string' || !memo) throw new Error('reversal memo required');
     validateDate(date, 'reversal date');
     if (date < original.date) throw new Error('reversal date cannot precede the original');
-    // Each mirrored line carries exactly the non-zero side. validateBody
-    // normalises back to {debit, credit: 0} for the frozen entry, so the
-    // stored shape matches a forward post exactly.
+    // Emit exactly the non-zero side; validateBody normalises the zero side
+    // back in for the frozen entry, matching a forward post.
     const mirrored = original.lines.map((l) =>
       l.debit > 0
         ? { account: l.account, credit: l.debit }
@@ -237,12 +241,6 @@ export class LedgerView {
     this.#overlay = overlay || null;
   }
 
-  byId(id) {
-    const e = this.entries().find((x) => x.id === id);
-    if (!e) throw new Error(`no entry with id ${String(id)} in view`);
-    return e;
-  }
-
   get accounts() { return this.#parent.accounts; }
   get currency() { return this.#parent.currency; }
   head() { return this.#parent.head(); }
@@ -277,7 +275,16 @@ export class LedgerView {
     return e;
   }
 
-  // View composition. Only one excludeSeq is supported; impact only needs one.
+  // Impact and the receipt builder look up by content id; the view must
+  // expose the same byId surface that Ledger does. Searches the view's own
+  // entries so an overlay synthetic entry is also reachable by id if the
+  // caller passes one in.
+  byId(id) {
+    const e = this.entries().find((x) => x.id === id);
+    if (!e) throw new Error(`no entry with id ${id} in view`);
+    return e;
+  }
+
   exclude(seq) {
     if (this.#excludeSeq !== undefined && this.#excludeSeq !== seq) {
       throw new Error(`view already excludes ${this.#excludeSeq}`);
