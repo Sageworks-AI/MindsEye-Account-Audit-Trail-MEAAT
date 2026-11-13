@@ -1,15 +1,13 @@
 #!/usr/bin/env node
-// Enforces the import rules from the three specification parts. Runs in `npm test`.
-// Fails with a list of violations if any are found, exits 0 otherwise.
+// Enforces the import rules from the three specification parts. Runs in
+// `npm test`. Fails with a list of violations if any are found, exits 0
+// otherwise.
 //
-// The matrix below is the union of the base prompt's import rules with the
-// extensions Addendum A and Addendum B require. See README §Assumptions #1
-// and #19: the base rule "app imports view and its own api.js only" would
-// make the space and attention layers unreachable from the client, so app
-// is allowed to import view, resolve, space, attention, bridge and its own
-// files. core is still restricted to node:* built-ins; space and attention
-// import nothing outside their own folders.
-
+// S6: adds a file-level rule for the bridge area. bridge may import from
+// `core` ONLY the file `core/schema.mjs` (plain data, no ledger). Every
+// other route into core from bridge — `core/ledger.mjs`, `core/cards/...`,
+// etc — is a violation. This is what lets bridge/schema.mjs re-export the
+// type list while preventing the bridge from reaching into the ledger.
 import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep, posix, resolve as pathResolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -23,9 +21,12 @@ const SKIP_DIRS = new Set([
 ]);
 const CODE_EXT = new Set(['.mjs', '.js', '.jsx', '.ts', '.tsx']);
 
-// Areas are matched by longest prefix first. `paths` lists sibling areas whose
-// files may be imported. `bare` lists npm packages allowed as bare specifiers.
-// The string 'ANY' means no restriction (used for test/ and scripts/ tooling).
+// The single file in core/ that bridge may import.
+const BRIDGE_ALLOWED_CORE_FILE = 'core/schema.mjs';
+
+// Areas are matched by longest prefix first. `paths` lists sibling areas
+// whose files may be imported. `bare` lists npm packages allowed as bare
+// specifiers. The string 'ANY' means no restriction (test/ and scripts/).
 const AREA_RULES = [
   ['app/src/attention', { paths: ['attention', 'bridge'], bare: ['react', 'react-dom'] }],
   ['app/src',           { paths: ['view', 'resolve', 'space', 'attention', 'bridge'],
@@ -60,10 +61,6 @@ function areaOf(relPath) {
   return null;
 }
 
-// Heuristic static scanner for import specifiers. Errs on the strict side:
-// a string that looks like a `from "..."` clause is treated as an import even
-// if it appears in a comment. In this repo that is acceptable — comments
-// rarely contain import syntax, and false positives are easy to fix.
 function extractImports(source) {
   const specs = new Set();
   for (const m of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) specs.add(m[1]);
@@ -72,8 +69,6 @@ function extractImports(source) {
   return [...specs];
 }
 
-// A scoped package's name is @scope/name; anything after the next slash is a
-// subpath. For unscoped packages the name is the segment up to the first slash.
 function barePackageName(spec) {
   if (spec.startsWith('@')) {
     const first = spec.indexOf('/');
@@ -113,6 +108,15 @@ export function checkFile(relPath, source) {
       }
       if (target.prefix === area.prefix) continue;
       if (area.prefix.startsWith(target.prefix + '/')) continue;
+      // S6 file-level rule: bridge may import core/schema.mjs only.
+      if (area.prefix === 'bridge' && target.prefix === 'core') {
+        if (resolved !== BRIDGE_ALLOWED_CORE_FILE) {
+          violations.push(
+            `${relPath}: bridge may only import ${BRIDGE_ALLOWED_CORE_FILE} from core ` +
+            `(got "${resolved}")`);
+        }
+        continue;
+      }
       if (paths.includes(target.prefix)) continue;
       violations.push(
         `${relPath}: import "${spec}" -> area "${target.prefix}" ` +
@@ -127,6 +131,14 @@ export function checkFile(relPath, source) {
       if (paths.includes(pkg)) continue;
       if (pkg === area.prefix) continue;
       if (area.prefix.startsWith(pkg + '/')) continue;
+      // Bare specifiers cannot name a specific file; the file-level rule
+      // for bridge→core applies only to relative imports.
+      if (area.prefix === 'bridge' && pkg === 'core') {
+        violations.push(
+          `${relPath}: bridge may not use bare import "${spec}" to reach core ` +
+          `(relative import of ${BRIDGE_ALLOWED_CORE_FILE} only)`);
+        continue;
+      }
       violations.push(
         `${relPath}: bare import "${spec}" reaches into area "${pkg}" ` +
         `not allowed from "${area.prefix}"`);
