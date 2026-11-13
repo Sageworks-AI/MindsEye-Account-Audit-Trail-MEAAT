@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "themes": {
+    "light": {
+      "fg": { "r": 32, "g": 32, "b": 32 },
+      "bg": { "r": 255, "g": 255, "b": 255 },
+      "table": [
+        { "opacity": 1000, "brightness": 1000, "saturation": 1000, "blur": 0, "shadow": 1800, "radius": 1050 },
+        { "opacity": 880,  "brightness": 940,  "saturation": 900,  "blur": 0, "shadow": 900,  "radius": 900  },
+        { "opacity": 640,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
+      ]
+    },
+    "dark": {
+      "fg": { "r": 230, "g": 230, "b": 230 },
+      "bg": { "r": 30,  "g": 30,  "b": 30  },
+      "table": [
+        { "opacity": 1000, "brightness": 1000, "saturation": 1000, "blur": 0, "shadow": 1800, "radius": 1050 },
+        { "opacity": 880,  "brightness": 940,  "saturation": 900,  "blur": 0, "shadow": 900,  "radius": 900  },
+        { "opacity": 640,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
+      ]
+    }
+  },
+  "timing": {
+    "durationMs": { "focus": 220, "inputBegin": 160, "inputEnd": 200, "transfer": 240 },
+    "easing": { "x1": 250, "y1": 100, "x2": 250, "y2": 1000 }
+  }
+}
