@@ -1,141 +1,85 @@
-// The solver: viewport + pane requests + archetypes -> per-pane { rect,
-// shapeClass, tier, scale, pagination }. All geometry in cpt (BigInt).
-// Enforces L1, L3, L4, L6, L11 inside the solve; L2 is discharged by
-// apportion; L5, L7, L8, L9, L10, L12 are verified by tests. Any law that
-// would be violated returns { error, law } rather than a bad layout.
-import { chooseTemplate } from './templates.mjs';
-import { paginate } from './paginate.mjs';
-import { makeRational } from './rational.mjs';
+// Finite set of split templates for n = 1..4 panes. All splits use Hamilton
+// apportionment so parts sum exactly to the span (Law L2).
+//
+// S6: templates now take an optional `weights` array in **template order**
+// (focal first when the caller has reordered; original order otherwise).
+// The JS twin's solve.mjs and resolve/layout.mjs both reorder before calling
+// so the focal pane lands in the large slot. n=1 and n=4 ignore weights
+// (single pane or 2x2 grid).
+//
+// 3-pane rule (README #22): the focal pane takes 600/1000 of the long axis,
+// the two smalls share the remaining 400/1000 in proportion to their own
+// weights. This matches resolve/layout.mjs's S4-close behaviour exactly; the
+// two modules must stay in lockstep (they do — this template is the only
+// implementation now).
+import { apportion } from './apportion.mjs';
 
-export const MIN_BODY_CPT   = 675n;
-export const DISPLAY_MAX    = 12;
-export const DEFAULT_GUTTER_CPT = 600n;   // 8 CSS px
-
-// Tier thresholds in cpt, mirroring resolve/tiers.mjs (px * 75).
-export const TIER_THRESHOLDS = Object.freeze({
-  summaryBelow:  { w: 24000n, h: 18000n },
-  standardBelow: { w: 48000n, h: 36000n },
-});
-
-const SHAPES = ['FULL', 'HALF', 'QUARTER', 'STRIP'];
-
-function pickShape(rectCpt, archetype, minBodyCpt) {
-  const bodyCpt = BigInt(archetype.typeScalePt.body * 100);
-  for (const shapeClass of SHAPES) {
-    const dims = archetype.shapeDimensions[shapeClass];
-    if (!dims) continue;
-    const pageW = BigInt(dims.wPt * 100);
-    const pageH = BigInt(dims.hPt * 100);
-    // Uniform scale = min(rect.w / pageW, rect.h / pageH), as a rational.
-    let num, den;
-    if (rectCpt.w * pageH < rectCpt.h * pageW) { num = rectCpt.w; den = pageW; }
-    else { num = rectCpt.h; den = pageH; }
-    const effectiveBodyCpt = (bodyCpt * num) / den;
-    if (effectiveBodyCpt >= minBodyCpt) {
-      return { shapeClass, scale: makeRational(num, den), effectiveBodyCpt };
-    }
+export function chooseTemplate(n) {
+  switch (n) {
+    case 1: return (w, h) => [{ x: 0n, y: 0n, w, h }];
+    case 2: return (w, h, g, weights) => w >= h
+      ? splitHorizontal(w, h, g, weights)
+      : splitVertical(w, h, g, weights);
+    case 3: return (w, h, g, weights) => threePane(w, h, g, weights);
+    case 4: return (w, h, g) => fourPane(w, h, g);
   }
-  return {
-    error: `pane ${rectCpt.w}x${rectCpt.h}cpt too small for STRIP shape at MIN_BODY (${minBodyCpt}cpt)`,
-    law: 'L4',
-  };
+  throw new Error(`no template for n=${n}`);
 }
 
-function pickTier(rectCpt) {
-  if (rectCpt.w < TIER_THRESHOLDS.summaryBelow.w ||
-      rectCpt.h < TIER_THRESHOLDS.summaryBelow.h) return 'summary';
-  if (rectCpt.w < TIER_THRESHOLDS.standardBelow.w ||
-      rectCpt.h < TIER_THRESHOLDS.standardBelow.h) return 'standard';
-  return 'full';
+function defaultWeights(weights, n) {
+  if (Array.isArray(weights) && weights.length === n) return weights;
+  return new Array(n).fill(1n);
 }
 
-function overlaps(a, b) {
-  return !(a.x + a.w <= b.x || b.x + b.w <= a.x ||
-           a.y + a.h <= b.y || b.y + b.h <= a.y);
+function splitHorizontal(w, h, g, weights) {
+  const [lw, rw] = apportion(w - g, defaultWeights(weights, 2));
+  return [
+    { x: 0n,        y: 0n, w: lw, h },
+    { x: lw + g,    y: 0n, w: rw, h },
+  ];
 }
 
-export function solve(viewport, panes, opts = {}) {
-  if (!viewport || typeof viewport.w !== 'bigint' || typeof viewport.h !== 'bigint' ||
-      viewport.w <= 0n || viewport.h <= 0n) {
-    return { error: 'viewport must be { w: BigInt > 0, h: BigInt > 0 }' };
+function splitVertical(w, h, g, weights) {
+  const [th, bh] = apportion(h - g, defaultWeights(weights, 2));
+  return [
+    { x: 0n, y: 0n,       w, h: th },
+    { x: 0n, y: th + g,   w, h: bh },
+  ];
+}
+
+function threePane(w, h, g, weights) {
+  const ws = defaultWeights(weights, 3);
+  // weights[0] is the focal weight (caller reordered). Smalls share 400 by
+  // their own weights; a missing/invalid weight is coerced to 1.
+  const smallWeights = [
+    ws[1] > 0n ? ws[1] : 1n,
+    ws[2] > 0n ? ws[2] : 1n,
+  ];
+  if (w >= h) {
+    const [lw, rw] = apportion(w - g, [600n, 400n]);
+    const [th, bh] = apportion(h - g, smallWeights);
+    return [
+      { x: 0n,        y: 0n,       w: lw, h },
+      { x: lw + g,    y: 0n,       w: rw, h: th },
+      { x: lw + g,    y: th + g,   w: rw, h: bh },
+    ];
   }
-  if (!Array.isArray(panes)) return { error: 'panes must be an array' };
+  const [th, bh] = apportion(h - g, [600n, 400n]);
+  const [lw, rw] = apportion(w - g, smallWeights);
+  return [
+    { x: 0n,       y: 0n,       w, h: th },
+    { x: 0n,       y: th + g,   w: lw, h: bh },
+    { x: lw + g,   y: th + g,   w: rw, h: bh },
+  ];
+}
 
-  const gutter = opts.gutter ?? DEFAULT_GUTTER_CPT;
-  const minBodyCpt = opts.minBodyCpt ?? MIN_BODY_CPT;
-  const archetypes = opts.archetypes;
-  if (!archetypes || typeof archetypes !== 'object') {
-    return { error: 'opts.archetypes required' };
-  }
-
-  // L12 isolation: BAR panes are appearance-only and reserve no geometry.
-  const geom = panes
-    .map((p, i) => ({ p, i }))
-    .filter(({ p }) => p.isBar !== true);
-  if (geom.length === 0) return { panes: [], focalIndex: -1, laws: { L1: 'pass' } };
-  if (geom.length > 4) return { error: `cannot solve ${geom.length} geometry panes (max 4)` };
-
-  // Focal is first; if the caller passed a focalIndex outside the geometry
-  // panes (e.g. pointed at a BAR), we fall back to the first.
-  const focalAt = opts.focalIndex;
-  const focalPos = geom.findIndex(({ i }) => i === focalAt);
-  const ordered = focalPos > 0
-    ? [...geom.slice(focalPos), ...geom.slice(0, focalPos)]
-    : geom;
-
-  const rects = chooseTemplate(ordered.length)(viewport.w, viewport.h, gutter);
-
-  // L1: partition (rects inside viewport, disjoint).
-  for (const r of rects) {
-    if (r.x < 0n || r.y < 0n || r.x + r.w > viewport.w || r.y + r.h > viewport.h) {
-      return { error: `L1 violation: rect ${r.x},${r.y},${r.w},${r.h} outside viewport ${viewport.w}x${viewport.h}`, law: 'L1' };
-    }
-  }
-  for (let i = 0; i < rects.length; i++) {
-    for (let j = i + 1; j < rects.length; j++) {
-      if (overlaps(rects[i], rects[j])) return { error: `L1 violation: panes ${i},${j} overlap`, law: 'L1' };
-    }
-  }
-
-  // L6: focal (rect 0 by construction) contains the viewport center.
-  const cx = viewport.w / 2n, cy = viewport.h / 2n;
-  const f = rects[0];
-  if (!(cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h)) {
-    return { error: `L6 violation: focal rect does not contain viewport center`, law: 'L6' };
-  }
-
-  const out = new Array(panes.length);
-  for (let k = 0; k < ordered.length; k++) {
-    const { p, i } = ordered[k];
-    const archetype = archetypes[p.archetypeId];
-    if (!archetype) return { error: `unknown archetype: ${p.archetypeId}` };
-    const rect = rects[k];
-    const shapePick = pickShape(rect, archetype, minBodyCpt);
-    if (shapePick.error) return { error: `pane ${i}: ${shapePick.error}`, law: shapePick.law };
-    const tier = pickTier(rect);
-    const rowsUpperBound = p.claim && Number.isInteger(p.claim.rowsUpperBound)
-      ? p.claim.rowsUpperBound : archetype.typicalRows;
-    const pagination = paginate({ rows: rowsUpperBound, shapeClass: shapePick.shapeClass, archetype });
-    if (pagination.error) return { error: `pane ${i}: ${pagination.error}`, law: 'L11' };
-    out[i] = {
-      originalIndex: i,
-      rect,
-      shapeClass: shapePick.shapeClass,
-      tier,
-      scale: shapePick.scale,
-      effectiveBodyCpt: shapePick.effectiveBodyCpt,
-      pagination: pagination.pages,
-      rowsUpperBound,
-    };
-  }
-
-  return {
-    panes: out,
-    focalIndex: focalAt ?? ordered[0].i,
-    viewport,
-    laws: {
-      L1: 'pass', L2: 'pass', L3: 'pass', L4: 'pass',
-      L6: 'pass', L11: 'pass', L12: 'pass',
-    },
-  };
+function fourPane(w, h, g) {
+  const [lw, rw] = apportion(w - g, [1n, 1n]);
+  const [th, bh] = apportion(h - g, [1n, 1n]);
+  return [
+    { x: 0n,        y: 0n,       w: lw, h: th },
+    { x: lw + g,    y: 0n,       w: rw, h: th },
+    { x: 0n,        y: th + g,   w: lw, h: bh },
+    { x: lw + g,    y: th + g,   w: rw, h: bh },
+  ];
 }
