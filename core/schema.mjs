@@ -3,9 +3,12 @@
 // because it is pure data — no ledger, no functions — bridge/schema.mjs can
 // re-export it as the single allowed file-level bridge into core/. That
 // lets resolve/ use the type list without violating the "resolve imports
-// only space and bridge" boundary. A test (test/schema.test.mjs) checks
-// that CARD_TYPES matches core/cards/index.mjs REGISTRY on period and
-// minTier, so the two representations cannot drift.
+// only space and bridge" boundary.
+//
+// S6 adds MAX_ENTRY_LINES. The receipt card's row upper bound is
+// MAX_ENTRY_LINES, which keeps L7 (exact <= predicted) provable: a receipt
+// never has more lines than the ledger allows.
+export const MAX_ENTRY_LINES = 32;
 
 export const CARD_TYPES = Object.freeze({
   trial_balance:    Object.freeze({ period: 'instant', minTier: 'summary' }),
@@ -15,9 +18,6 @@ export const CARD_TYPES = Object.freeze({
   receipt:          Object.freeze({ period: 'entry',   minTier: 'standard' }),
 });
 
-// SECTION_IDS[type] is a superset of the sections a built card of that type
-// can produce. Cash-flow section ids are dynamic (only cf classes with
-// entries appear); this list declares every id the builder can emit.
 export const SECTION_IDS = Object.freeze({
   trial_balance:    Object.freeze(['accounts']),
   balance_sheet:    Object.freeze(['assets', 'liabilities', 'equity']),
@@ -29,8 +29,6 @@ export const SECTION_IDS = Object.freeze({
   receipt:          Object.freeze(['lines']),
 });
 
-// COLUMN_KEYS[type] lists every column key the builder can emit for that
-// type. The renderer uses this to decide alignment, formatting and width.
 export const COLUMN_KEYS = Object.freeze({
   trial_balance:    Object.freeze(['code', 'label', 'debit', 'credit']),
   balance_sheet:    Object.freeze(['label', 'amount']),
