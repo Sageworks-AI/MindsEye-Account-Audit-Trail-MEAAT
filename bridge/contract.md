@@ -56,3 +56,44 @@ equals that cap so L7 is provable without inspecting the ledger.
 
 `pxFromCpt(rectCpt)` is the sole px derivation rule. It floors each
 **edge**, not the width and height independently:
+
+left_i = floor(x_i / 75)
+right_i = floor((x_i + w_i) / 75)
+w_i = right_i - left_i
+
+
+This guarantees that px rects stay disjoint when cpt rects were, and that
+the rightmost px edge never exceeds the px viewport width even when the
+cpt viewport has a sub-pixel remainder. Used by `resolve/plan.mjs` and by
+any caller that needs px coordinates for CSS.
+
+## Event drafts
+
+The bridge never imports `sequencer`; it returns plain event drafts:
+
+{ type: 'space.premeasured' | 'space.laid_out' | 'space.reconciled'
+| 'space.violation' | 'space.rejected' | 'space.degraded'
+| 'space.fallback',
+lane: 'space',
+ref: { ... },
+tags: [ ... ],
+note?: string }
+
+
+The caller turns them into real events with
+`sequencer.events.eventFromDraft(draft, { id, ts, source })`. This keeps
+the "invisible never means unaudited" rule while respecting the boundary
+"bridge imports only schema, space and (S13) attention".
+
+## Adapters in resolve/
+
+`resolve/layout.mjs`, `resolve/tiers.mjs` and `resolve/plan.mjs` are thin
+adapters over space and bridge:
+
+- `layout.mjs` calls `space.chooseTemplate` for the split, converts px ↔
+  cpt at the boundary. Same public API as before.
+- `tiers.mjs` reads `TIER_THRESHOLDS` from `space/index.mjs` (one source of
+  truth). Converts cpt → px for the exported thresholds.
+- `plan.mjs` keeps its signature, calls `bridge.premeasure`, converts
+  `frameCpt` back to px via `bridge.pxFromCpt`, attaches caller-supplied
+  cache keys, returns the plan plus a `space.premeasured` draft.
