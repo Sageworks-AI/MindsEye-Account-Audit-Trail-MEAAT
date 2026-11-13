@@ -6,8 +6,10 @@
 // or a negative error code. Inputs and outputs both start with a version
 // word (= att_version()) so a mismatch is caught immediately.
 //
-// Layouts are in attention/ABI.md. State and snapshot layout order matches
-// attention/js/abi.mjs exactly; the JS twin is the oracle for parity.
+// S8 correction: `emit_state` uses `emit_id` (no kind) for the transfer's
+// source. The earlier version used `emit_actor`, which emitted an extra
+// slot and desynced the parse that follows; `parse_state` uses `parse_id`
+// for the same field, so emit and parse must agree.
 #include <cstdint>
 #include <cstring>
 
@@ -23,13 +25,13 @@ static int64_t g_scratch[65536]; // 512 KiB; documented in attention/ABI.md
 
 static constexpr int64_t VERSION = 1;
 static constexpr int64_t SCRATCH_SLOTS = 65536;
+static constexpr int64_t E_BAD_VERSION      = -1;
+static constexpr int64_t E_BAD_ARGUMENT     = -2;
+static constexpr int64_t E_OUTPUT_TOO_SMALL = -7;
 
-static constexpr int64_t E_BAD_VERSION       = -1;
-static constexpr int64_t E_BAD_ARGUMENT      = -2;
-static constexpr int64_t E_OUTPUT_TOO_SMALL  = -7;
-
-// ---- helpers ----
-
+// State layout: lastPointerEpoch, ring, history, transferActive,
+// [sourceId, payloadKind, basicSnapshot], inputActive, [channel, fullSnapshot].
+// The transfer's source is emitted with emit_id (no kind).
 static bool emit_state(int64_t* out, int64_t outLen, int64_t* offset,
                        const att::State& s) {
     int64_t off = *offset;
@@ -40,7 +42,7 @@ static bool emit_state(int64_t* out, int64_t outLen, int64_t* offset,
     if (off + 1 > outLen) return false;
     out[off++] = s.transfer.active;
     if (s.transfer.active) {
-        if (!att::emit_actor(out, outLen, &off, s.transfer.source)) return false;
+        if (!att::emit_id(out, outLen, &off, s.transfer.source.cpLen, s.transfer.source.cp)) return false;
         if (off + 1 > outLen) return false;
         out[off++] = s.transfer.payloadKind;
         if (!att::emit_basic(out, outLen, &off, s.transfer.snap)) return false;
@@ -140,6 +142,9 @@ static void emit_theme(int64_t* out, const att::ThemeTable& t, const att::Timing
     out[p++] = timing.x2; out[p++] = timing.y2;
 }
 
+// S8 correction: shadow/radius accept up to 100000 cpt so the shipped
+// levels.json (shadow 1800, radius 1050) parses. opacity/brightness/
+// saturation/blur stay bounded to permille [0, 1000].
 static bool parse_theme(int64_t const* in, int64_t inLen, int64_t offset,
                         att::ThemeTable* t, att::Timing* timing) {
     if (offset + 32 > inLen) return false;
@@ -152,12 +157,12 @@ static bool parse_theme(int64_t const* in, int64_t inLen, int64_t offset,
         r.blur       = (int32_t)in[p++];
         r.shadow     = (int32_t)in[p++];
         r.radius     = (int32_t)in[p++];
-        if (r.opacity < 0 || r.opacity > 1000) return false;
-        if (r.brightness < 0 || r.brightness > 1000) return false;
-        if (r.saturation < 0 || r.saturation > 1000) return false;
-        if (r.blur < 0 || r.blur > 1000) return false;
-        if (r.shadow < 0 || r.shadow > 1000) return false;
-        if (r.radius < 0 || r.radius > 1000) return false;
+        if (r.opacity    < 0 || r.opacity    > 1000)   return false;
+        if (r.brightness < 0 || r.brightness > 1000)   return false;
+        if (r.saturation < 0 || r.saturation > 1000)   return false;
+        if (r.blur       < 0 || r.blur       > 1000)   return false;
+        if (r.shadow     < 0 || r.shadow     > 100000) return false;
+        if (r.radius     < 0 || r.radius     > 100000) return false;
     }
     t->colors.fgR = (int32_t)in[p++]; t->colors.fgG = (int32_t)in[p++]; t->colors.fgB = (int32_t)in[p++];
     t->colors.bgR = (int32_t)in[p++]; t->colors.bgG = (int32_t)in[p++]; t->colors.bgB = (int32_t)in[p++];
@@ -169,8 +174,6 @@ static bool parse_theme(int64_t const* in, int64_t inLen, int64_t offset,
     timing->x2 = (int32_t)in[p++]; timing->y2 = (int32_t)in[p++];
     return true;
 }
-
-// ---- exported functions ----
 
 ATT_EXPORT int64_t att_version(void) { return VERSION; }
 
@@ -238,8 +241,7 @@ ATT_EXPORT int64_t att_step(int64_t inLen) {
     const att::State& outState =
         (rc == att::ATT_OK || rc == att::ATT_NOOP ||
          rc == att::ATT_ALREADY_FOCUSED || rc == att::ATT_POINTER_STALE)
-            ? state
-            : preState;
+            ? state : preState;
 
     int64_t writeStart = inLen;
     if (writeStart + 3 > SCRATCH_SLOTS) return E_OUTPUT_TOO_SMALL;
