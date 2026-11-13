@@ -10,6 +10,22 @@ Enclosed means: one `git clone`, one `npm install`, one command to run. No
 cloud accounts, no CDN, no web fonts, no network calls at runtime or at report
 time, no credentials anywhere in the repo.
 
+## Current status
+
+S0 is done. The files for S1 to S4 (`core/`, `store/`, `sequencer/`,
+`resolve/`, `space/` JS twin) exist and are being brought to a green suite in
+nine stabilisation batches (B1 to B9). S1 to S4 are marked **done** in the
+table below only when `npm test` reports 0 failures and the boundary check
+prints `boundary check: OK`. S5 onward has not been started.
+
+Only these commands work today: `npm install`, `npm test`, `npm run verify`
+and `npm run check-boundaries`. The rest of the scripts in `package.json` are
+placeholders for later stages.
+
+Longer documentation lives in the project wiki: architecture, module
+boundaries, ledger and cards, space layout engine, resolve layer, testing and
+guards, roadmap and conventions.
+
 ## Design in one page
 
 - **Time is the coordinate. Money is the measured quantity.** Every card is a
@@ -48,25 +64,41 @@ time, no credentials anywhere in the repo.
 - **Every card carries checks.** A failing check is visible on the card and
   makes `npm run report` exit non-zero.
 
-## Running (once fully built)
+## Running
+
+Works today (needs Node 20 or newer):
+
+```
 npm install
-npm test # node:test suites + boundary check (+ space/attention laws)
+npm test               # node:test suites + boundary check
+npm run check-boundaries
+npm run verify         # verifies data/journal.jsonl hash chain
+```
+
+Available once the later stages are built (S11 to S13):
+
+```
 npm run report # out/report.html + out/report.json; non-zero on any failed check
 npm run dev # server on 127.0.0.1:4000 + Vite client (Unix/macOS)
 npm start # production server serving the built client
 npm run demo # seeds the demo ledger in memory and prints card summaries
-npm run verify # verifies data/journal.jsonl hash chain
+```
 
 Optional, only needed when changing C++ or the Python conductor:
+
+```
 npm run build:space # Emscripten build of space/cpp → space/dist/space.wasm
 npm run build:attention # Emscripten build of attention/cpp → attention/dist/attention.wasm
 npm run conduct # Python 3.10+ regenerates choreographies, storyboards, CSS
 npm run conduct:verify # verifies committed conductor outputs
+```
 
 `npm test` and `npm run report` use committed wasm binaries plus their JS
 twins; no C++ toolchain and no Python are required.
 
 ## Repository layout
+
+```
 core/ money, time, canonical, hash, accounts, ledger, checks, cards, impact, trail
 store/ journalFile, journalMemory, cardStore, trailStore
 sequencer/ events, lanes, buckets, log, strip
@@ -83,7 +115,7 @@ test/ node:test suites
 scripts/ check-boundaries, verify-journal, verify-space, verify-attention,
 emit-attention-css
 data/ runtime only (gitignored): journal.jsonl, events.jsonl, trails/, cards-cache.json
-
+```
 
 The server binds `127.0.0.1` only. There is **no authentication in v1** — that
 is a known limit; do not expose this server on a public interface.
@@ -203,15 +235,54 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
     client skeleton from MindsEye (MIT, (c) 2025 Peace Thabiwa). The
     attribution is preserved in the License section below.
 
+22. **Three-pane rule (60 percent).** In a three-pane layout the focal pane
+    takes 60 percent of the long axis and the other two share 40 percent.
+    Pane weights choose the large pane (ties to the lowest index) and split
+    the two small panes. Implemented in `resolve/layout.mjs`.
+
+23. **Narrower QUARTER and STRIP pages.** For archetypes whose FULL page is
+    wider than 420 pt, QUARTER is 420 pt wide and STRIP is 360 pt wide, so
+    body text stays at or above `MIN_BODY` in a pane at 1280x720. `MIN_BODY`
+    itself is not lowered. Reasoning is recorded in `space/README.md`.
+
+24. **Schema route for `resolve`.** `resolve/` must not import `core/` or
+    `store/`. Card type data (period kind, minimum tier) reaches it through
+    `bridge/schema.mjs`, which re-exports `core/schema.mjs` (plain data, no
+    imports). `bridge/` may import only that one file from `core/`; the
+    boundary checker enforces this at file level.
+
+25. **`resolve/dates.mjs` mirrors `core/time.mjs`.** The pure date helpers are
+    copied so `resolve/` stays off `core/`. A parity test keeps the two
+    identical on seeded inputs.
+
+26. **`plan()` takes its cache-key function from the caller.** Callers pass
+    `CardStore.cacheKey` as `opts.cacheKey`. `plan()` returns an error if it
+    is missing. This removes the `resolve` to `store` import.
+
+27. **Copyright line in `LICENSE`.** The owner changed it on purpose and it is
+    never edited by tooling. The scaffold test checks only its structure
+    (starts with `MIT License`, has a year and a name), not the name itself.
+
+28. **L7 and L8 arrive in S6.** The two space laws that involve the bridge are
+    tested when `bridge/` is built. The property test file says so in its
+    header.
+
+29. **Constancy guards.** Three guards keep earlier stages stable while later
+    ones are built: a stage manifest (`scripts/stages.json`) checked against
+    the status table below, an API-surface snapshot of the public modules, and
+    golden outputs (demo card hashes and layout rectangles). Golden files
+    change only on purpose, by running `npm run golden:update` and committing
+    the result. They are never edited by hand.
+
 ## Status by stage
 
 | Stage | Content | State |
 |---|---|---|
 | S0 | Scaffold, boundary checker, scaffold test | **done** |
-| S1 | `core/` v2 + tests | pending |
-| S2 | `store/` + `sequencer/` | pending |
-| S3 | `resolve/` | pending |
-| S4 | `space/` JS twin + reference data | pending |
+| S1 | `core/` v2 + tests | stabilising |
+| S2 | `store/` + `sequencer/` | stabilising |
+| S3 | `resolve/` | stabilising |
+| S4 | `space/` JS twin + reference data | stabilising |
 | S5 | `space/` C++ + wasm + parity | pending |
 | S6 | `bridge/` | pending |
 | S7 | `attention/` JS twin + level table | pending |
@@ -222,6 +293,9 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 | S12 | `server/` | pending |
 | S13 | `app/` (React + Vite) | pending |
 | S14 | Final integration, README final pass, DoD checklist | pending |
+
+S1 to S4 change from *stabilising* to **done** when the stabilisation batches
+pass (`npm test`: 0 failures, `boundary check: OK`).
 
 ## Known limitations (v1)
 
