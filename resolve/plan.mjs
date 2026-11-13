@@ -1,17 +1,15 @@
-// Takes a validated request plus a viewport and produces, for each card, a
-// cache key, a rectangle, and a tier. Space is computed before any data is
-// fetched so the screen lays out instantly while cards load.
-//
-// S4-close: two boundary-driven changes.
-//   1. CARD_TYPES comes from bridge/schema.mjs (pure data), not from the
-//      registry, so resolve does not import core/cards.
-//   2. The cacheKey function is injected by the caller instead of importing
-//      store/cardStore.mjs. Production passes CardStore.cacheKey; tests pass
-//      a deterministic stub; a future space/WASM plan can pass anything that
-//      satisfies the shape. Required: plan returns { error } if it is absent.
-import { solve } from './layout.mjs';
-import { tierForRect } from './tiers.mjs';
-import { CARD_TYPES } from '../bridge/schema.mjs';
+// Thin adapter over bridge/measure.mjs. Keeps the S4-close signature:
+//   plan(request, viewport, { head, cacheKey, weights, minSize, gutter })
+// - cacheKey is REQUIRED (function type); caller passes CardStore.cacheKey
+//   in production, a deterministic stub in tests. Required so resolve does
+//   not import store/cardStore.mjs.
+// - viewport is in CSS px; bridge does the cpt conversion, the space solve,
+//   and the px round-trip.
+// - Returns { head, viewport, mode, cards: [{cacheKey, rect, tier, ...}],
+//   focalIndex, drafts }, or { error }.
+import { premeasure, pxFromCpt, draftPremeasured } from '../bridge/measure.mjs';
+
+const PT_PER_PX = 75n;
 
 export function plan(request, viewport, opts = {}) {
   if (!request || typeof request !== 'object') {
@@ -28,40 +26,48 @@ export function plan(request, viewport, opts = {}) {
   if (typeof cacheKey !== 'function') {
     return { error: 'plan: opts.cacheKey must be a function ({type,params,period,head}) => string' };
   }
+  if (!viewport || !Number.isSafeInteger(viewport.w) || !Number.isSafeInteger(viewport.h) ||
+      viewport.w <= 0 || viewport.h <= 0) {
+    return { error: 'plan: viewport must be { w, h } positive integers' };
+  }
 
-  const solveResult = solve(request.cards, viewport, {
+  const viewportCpt = {
+    w: BigInt(viewport.w) * PT_PER_PX,
+    h: BigInt(viewport.h) * PT_PER_PX,
+  };
+  const gutterCpt = opts.gutter !== undefined
+    ? BigInt(opts.gutter) * PT_PER_PX
+    : undefined;
+
+  const result = premeasure(request, opts.chartOfAccounts || null, viewportCpt, {
     weights: opts.weights,
-    minSize: opts.minSize,
-    gutter: opts.gutter,
+    gutter: gutterCpt,
+    focalIndex: opts.focalIndex,
   });
-  if (solveResult.error) return { error: solveResult.error };
+  if (result.error) return { error: result.error };
 
   const period = request.period || {};
-  const cards = request.cards.map((c, i) => {
-    const rect = solveResult.rects[i];
-    const typeInfo = CARD_TYPES[c.type];
-    const minTier = typeInfo ? typeInfo.minTier : 'summary';
-    const tier = tierForRect(rect, { minTier });
-    const key = cacheKey({
-      type: c.type,
-      params: c.params || {},
-      period,
-      head,
-    });
+  const cards = [];
+  for (let i = 0; i < request.cards.length; i++) {
+    const c = request.cards[i];
+    const p = result.cards[i];
+    if (!p) return { error: `plan: premeasure did not return a frame for card ${i}` };
+    const key = cacheKey({ type: c.type, params: c.params || {}, period, head });
     if (typeof key !== 'string' || !key) {
-      return null;
+      return { error: 'plan: cacheKey function returned a non-string' };
     }
-    return {
+    cards.push({
       type: c.type,
       params: c.params || {},
       section: c.section,
       cacheKey: key,
-      rect,
-      tier,
-    };
-  });
-  if (cards.some((c) => c === null)) {
-    return { error: 'plan: cacheKey function returned a non-string' };
+      rect: pxFromCpt(p.frameCpt),
+      tier: p.tier,
+      shapeClass: p.shapeClass,
+      scale: p.scale,
+      predictedRows: p.predictedRows,
+      pagination: p.pagination,
+    });
   }
 
   return {
@@ -69,5 +75,7 @@ export function plan(request, viewport, opts = {}) {
     viewport: { w: viewport.w, h: viewport.h },
     mode: request.mode || 'read',
     cards,
+    focalIndex: result.focalIndex,
+    drafts: [draftPremeasured(result)],
   };
 }
