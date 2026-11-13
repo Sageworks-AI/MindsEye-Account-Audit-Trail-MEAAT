@@ -1,7 +1,7 @@
-// Solver mirroring space/js/solve.mjs. Enforces L1 (partition), L3 (uniform
-// scale), L4 (legibility floor), L6 (focal contains center), L11 (page
-// counts), L12 (BAR reserves no geometry). Each violation returns an error
-// code rather than a bad layout.
+// Solver mirroring space/js/solve.mjs. Enforces L1, L3, L4, L6, L11, L12.
+// S6: passes per-pane weights through to build_template so the split
+// honours them; weights are reordered along with panes when the focal
+// pane is not first in the geometry list.
 #ifndef SPACE_CPP_SOLVE_HPP
 #define SPACE_CPP_SOLVE_HPP
 
@@ -33,8 +33,8 @@ struct SolvePaneInput {
 struct SolvePaneOutput {
     int32_t origIdx;
     Rect rect;
-    int32_t shapeClass;   // 0 FULL, 1 HALF, 2 QUARTER, 3 STRIP
-    int32_t tier;         // 0 summary, 1 standard, 2 full
+    int32_t shapeClass;
+    int32_t tier;
     Rational scale;
     int64_t effectiveBodyCpt;
     int32_t nPages;
@@ -47,8 +47,6 @@ inline int32_t pick_tier(int64_t rw, int64_t rh) {
     return 2;
 }
 
-// Iterates FULL, HALF, QUARTER, STRIP; returns the first shape class whose
-// scaled body >= minBody. Mirrors pickShape() in solve.mjs exactly.
 inline int32_t pick_shape(const Archetype& arch, Rect rect, int64_t minBody,
                           int32_t* shapeClassOut, Rational* scaleOut,
                           int64_t* effectiveBodyOut) {
@@ -73,13 +71,9 @@ inline int32_t pick_shape(const Archetype& arch, Rect rect, int64_t minBody,
             return 0;
         }
     }
-    return -6; // ERR_NO_FEASIBLE_LAYOUT
+    return -6;
 }
 
-// Returns 0 on success. panesOut[*nOut] are filled in original index order,
-// each carrying its pages. focalOrigIdx is the ORIGINAL index of the focal
-// pane (-1 if no geometry panes). Uses focal = first non-BAR pane unless
-// focalIdx points to a non-BAR pane.
 inline int32_t solve_panes(
     int64_t viewportW, int64_t viewportH,
     const SolvePaneInput* in, int32_t nIn,
@@ -89,7 +83,6 @@ inline int32_t solve_panes(
     if (!in || !panesOut || !nOut || !focalOrigIdx) return -2;
     if (viewportW <= 0 || viewportH <= 0 || nIn < 0 || gutter < 0) return -2;
 
-    // Extract geometry panes in original order.
     int32_t geomCount = 0;
     int32_t geomOrigIdx[4];
     for (int32_t i = 0; i < nIn && geomCount < 4; ++i) {
@@ -100,14 +93,12 @@ inline int32_t solve_panes(
     if (geomCount > 4) return -2;
     if (geomCount == 0) { *nOut = 0; *focalOrigIdx = -1; return 0; }
 
-    // Focal position in geometry order; falls back to 0.
     int32_t focalPos = 0;
     for (int32_t g = 0; g < geomCount; ++g) {
         if (geomOrigIdx[g] == focalIdx) { focalPos = g; break; }
     }
     *focalOrigIdx = geomOrigIdx[focalPos];
 
-    // Reordered inputs, focal first.
     SolvePaneInput ordered[4];
     int32_t orderedOrig[4];
     for (int32_t g = 0; g < geomCount; ++g) {
@@ -116,11 +107,17 @@ inline int32_t solve_panes(
         orderedOrig[g] = geomOrigIdx[src];
     }
 
-    // Template rects (all in cpt).
-    Rect rects[4];
-    if (!build_template(geomCount, viewportW, viewportH, gutter, 0, rects)) return -3;
+    // S6: extract per-pane weights in template order.
+    int64_t orderedWeights[4];
+    for (int32_t g = 0; g < geomCount; ++g) {
+        orderedWeights[g] = ordered[g].weight > 0 ? ordered[g].weight : 1;
+    }
 
-    // L1: partition check.
+    Rect rects[4];
+    if (!build_template(geomCount, viewportW, viewportH, gutter, orderedWeights, rects)) {
+        return -3;
+    }
+
     for (int32_t g = 0; g < geomCount; ++g) {
         Rect r = rects[g];
         if (r.x < 0 || r.y < 0 || r.x + r.w > viewportW || r.y + r.h > viewportH) return -7;
@@ -132,13 +129,11 @@ inline int32_t solve_panes(
         }
     }
 
-    // L6: viewport center inside focal rect (rects[0]).
     int64_t cx = viewportW / 2;
     int64_t cy = viewportH / 2;
     Rect f = rects[0];
     if (!(cx >= f.x && cx <= f.x + f.w && cy >= f.y && cy <= f.y + f.h)) return -7;
 
-    // Compute shape, tier, pagination for each geometry pane, then map back.
     for (int32_t g = 0; g < geomCount; ++g) {
         SolvePaneInput pin = ordered[g];
         const Archetype& arch = ARCHETYPES[pin.archetypeIdx];
@@ -164,7 +159,6 @@ inline int32_t solve_panes(
                                localPages, MAX_PAGES_PER_PANE, &nPages, &perPage);
         if (prc != 0) return -8;
 
-        // Find the original index for this reordered position.
         int32_t orig = orderedOrig[g];
         int32_t slot = -1;
         for (int32_t k = 0; k < *nOut; ++k) if (panesOut[k].origIdx == orig) { slot = k; break; }
@@ -182,7 +176,6 @@ inline int32_t solve_panes(
         for (int32_t p = 0; p < nPages; ++p) panesOut[slot].pages[p] = localPages[p];
     }
 
-    // Sort output by origIdx for determinism.
     for (int32_t i = 1; i < *nOut; ++i) {
         SolvePaneOutput key = panesOut[i];
         int32_t j = i - 1;
