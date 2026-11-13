@@ -1,20 +1,23 @@
 // The attention state machine. One pure step per event. Returns
-// { state, code, frame } where `state` is frozen and byte-identical for
-// identical inputs, `code` is the ABI return code, and `frame` is the
-// per-actor appearance summary (only on OK / informational codes).
+// { state, code, event } where `state` is frozen and byte-identical for
+// identical inputs. Every error leaves the input state unchanged (returned
+// state === input state). Every success returns a new frozen state whose
+// ring satisfies M1, M2, M6, M7, M8, M14 by construction.
 //
-// Laws M1–M15 are enforced here or verified in tests. Every error leaves
-// the input state unchanged (returned state === input state). Every
-// success returns a new frozen state whose ring satisfies M1, M2, M6, M7,
-// M8, M14 by construction.
+// Corrections vs the earlier PART 3 output:
+//   - TRANSFER_COPY now requires at least two non-BAR actors (W10: "copy
+//     with one pane open returns TRANSFER_INVALID"). Without this the user
+//     could arm a copy that has no possible target.
+//   - TRANSFER_PASTE now validates the (payloadKind, targetKind, outcomeKind)
+//     matrix from Addendum B. An invalid pairing is TRANSFER_INVALID; the
+//     ring and transfer state are unchanged.
 import { makeRing, rankOf, moveToFront, insertAtFront, removeById,
-         docRank, findById, idsInOrder, pairFront } from './ring.mjs';
+         docRank, findById, pairFront } from './ring.mjs';
 import { makeEvent } from './events.mjs';
 import { makeHistory, pushHistory, popHistory } from './history.mjs';
 import { armTransfer } from './transfer.mjs';
 import { createHash } from 'node:crypto';
 
-// ABI return codes (mirrored in attention/ABI.md).
 export const OK = 0;
 export const NOOP = 1;
 export const POINTER_STALE = 2;
@@ -24,6 +27,16 @@ export const BAD_EVENT = -2;
 export const TRANSFER_INVALID = -3;
 export const RING_FULL = -4;
 export const LAW_VIOLATION = -5;
+
+// (payloadKind, targetKind) -> outcomeKind | null. Mirrors the transfer
+// matrix in Addendum B. `null` means the pairing is rejected.
+const TRANSFER_MATRIX = Object.freeze({
+  'entry':  Object.freeze({ DOC: 'impact',        FORM: 'draft-entry', TRAIL: null }),
+  'rows':   Object.freeze({ DOC: null,            FORM: 'draft-lines', TRAIL: 'trail-edit' }),
+  'row':    Object.freeze({ DOC: null,            FORM: 'draft-lines', TRAIL: 'trail-edit' }),
+  'period': Object.freeze({ DOC: 'period-change', FORM: null,          TRAIL: null }),
+  'node':   Object.freeze({ DOC: null,            FORM: null,          TRAIL: 'trail-edit' }),
+});
 
 export function makeState({ actors = [], lastPointerEpoch = 0 } = {}) {
   return Object.freeze({
@@ -35,31 +48,21 @@ export function makeState({ actors = [], lastPointerEpoch = 0 } = {}) {
   });
 }
 
-function ok(state, event, extra = {}) { return { state, code: OK, event, ...extra }; }
+function ok(state, event) { return { state, code: OK, event }; }
 function noop(state, event) { return { state, code: NOOP, event }; }
 function err(state, code, event) { return { state, code, event }; }
 
 function ringAfterInputFocus(ring, id) {
-  // BAR stays at rank 0 (M6). X goes to rank 1. Others keep their order.
   const bar = ring[0];
   if (!bar || bar.kind !== 'BAR') throw new Error('ringAfterInputFocus: BAR missing');
+  if (ring[1] && ring[1].id === id) return null;
+  const x = findById(ring, id);
   const others = [];
-  let alreadyAt1 = false;
   for (let i = 1; i < ring.length; i++) {
-    if (ring[i].id === id) {
-      if (i === 1) { alreadyAt1 = true; break; }
-      continue;
-    }
+    if (ring[i].id === id) continue;
     others.push(ring[i]);
   }
-  if (alreadyAt1) return null;
-  const x = findById(ring, id);
   return Object.freeze([bar, x, ...others]);
-}
-
-function ringAfterTransferFocus(ring, targetId, sourceId) {
-  // M13: (target, source) at levels (0, 1); others keep relative order.
-  return pairFront(ring, targetId, sourceId);
 }
 
 export function step(state, rawEvent) {
@@ -70,7 +73,6 @@ export function step(state, rawEvent) {
   switch (event.type) {
     case 'OPEN': {
       if (findById(state.ring, event.actor.id)) return err(state, BAD_ACTOR, event);
-      // Insert at rank 1 if input is active (BAR stays at 0); else at rank 0.
       let newRing;
       try {
         if (state.input) {
@@ -82,20 +84,15 @@ export function step(state, rawEvent) {
         } else {
           newRing = insertAtFront(state.ring, event.actor);
         }
-      } catch (e) {
-        return err(state, RING_FULL, event);
-      }
+      } catch (e) { return err(state, RING_FULL, event); }
       return ok(Object.freeze({ ...state, ring: newRing }), event);
     }
 
     case 'CLOSE': {
-      if (event.id === 'BAR' || findById(state.ring, event.id)?.kind === 'BAR') {
-        return err(state, BAD_ACTOR, event);
-      }
-      if (!findById(state.ring, event.id)) return err(state, BAD_ACTOR, event);
+      const target = findById(state.ring, event.id);
+      if (!target || target.kind === 'BAR') return err(state, BAD_ACTOR, event);
       let workingState = state;
       if (state.transfer && state.transfer.sourceId === event.id) {
-        // Closing a transfer source cancels the transfer (restore snapshot).
         workingState = {
           ...state,
           ring: state.transfer.snapshot.ring,
@@ -112,17 +109,12 @@ export function step(state, rawEvent) {
 
     case 'FOCUS': {
       const actor = findById(state.ring, event.id);
-      if (!actor) return err(state, BAD_ACTOR, event);
-      if (actor.kind === 'BAR') return err(state, BAD_ACTOR, event);
-
-      // M10 pointer anti-oscillation.
+      if (!actor || actor.kind === 'BAR') return err(state, BAD_ACTOR, event);
       if (event.source === 'pointer' && event.pointerEpoch <= state.lastPointerEpoch) {
         return err(state, POINTER_STALE, event);
       }
-      const newEpoch = event.source === 'pointer'
-        ? event.pointerEpoch : state.lastPointerEpoch;
+      const newEpoch = event.source === 'pointer' ? event.pointerEpoch : state.lastPointerEpoch;
 
-      // M6 input primacy.
       if (state.input) {
         const newRing = ringAfterInputFocus(state.ring, event.id);
         if (newRing === null) return noop(state, event);
@@ -131,19 +123,15 @@ export function step(state, rawEvent) {
                                   lastPointerEpoch: newEpoch }), event);
       }
 
-      // M13 transfer pairing.
       if (state.transfer) {
         if (event.id === state.transfer.sourceId) return noop(state, event);
-        const newRing = ringAfterTransferFocus(state.ring, event.id, state.transfer.sourceId);
+        const newRing = pairFront(state.ring, event.id, state.transfer.sourceId);
         const newHistory = pushHistory(state.history, state.ring);
         return ok(Object.freeze({ ...state, ring: newRing, history: newHistory,
                                   lastPointerEpoch: newEpoch }), event);
       }
 
-      // Normal case: M4 already-focused is a no-op.
-      if (rankOf(state.ring, event.id) === 0) {
-        return err(state, ALREADY_FOCUSED, event);
-      }
+      if (rankOf(state.ring, event.id) === 0) return err(state, ALREADY_FOCUSED, event);
       const newRing = moveToFront(state.ring, event.id);
       const newHistory = pushHistory(state.history, state.ring);
       return ok(Object.freeze({ ...state, ring: newRing, history: newHistory,
@@ -174,8 +162,6 @@ export function step(state, rawEvent) {
           input: null, lastPointerEpoch: snap.lastPointerEpoch,
         }), event);
       }
-      // commit: remove BAR, keep the ring order (docs may have been reordered
-      // by FOCUS events during input; those reorderings persist).
       let newRing;
       try { newRing = removeById(state.ring, 'BAR'); }
       catch (e) { return err(state, LAW_VIOLATION, event); }
@@ -185,9 +171,12 @@ export function step(state, rawEvent) {
     case 'TRANSFER_COPY': {
       if (state.transfer) return err(state, TRANSFER_INVALID, event);
       if (state.input) return err(state, TRANSFER_INVALID, event);
-      if (!findById(state.ring, event.sourceId)) return err(state, BAD_ACTOR, event);
+      // W10: copy with one pane open is TRANSFER_INVALID — a transfer
+      // needs both a source and a possible target.
+      const nonBar = state.ring.filter((a) => a.kind !== 'BAR').length;
+      if (nonBar < 2) return err(state, TRANSFER_INVALID, event);
       const source = findById(state.ring, event.sourceId);
-      if (source.kind === 'BAR') return err(state, BAD_ACTOR, event);
+      if (!source || source.kind === 'BAR') return err(state, BAD_ACTOR, event);
       const snapshot = Object.freeze({
         ring: state.ring, history: state.history,
         transfer: state.transfer, lastPointerEpoch: state.lastPointerEpoch,
@@ -204,11 +193,13 @@ export function step(state, rawEvent) {
     }
 
     case 'TRANSFER_PASTE': {
-      if (!state.transfer) return err(state, TRANSFER_INVALID, event);
-      if (state.input) return err(state, TRANSFER_INVALID, event);
-      if (!findById(state.ring, event.targetId)) return err(state, BAD_ACTOR, event);
+      if (!state.transfer || state.input) return err(state, TRANSFER_INVALID, event);
+      const target = findById(state.ring, event.targetId);
+      if (!target) return err(state, BAD_ACTOR, event);
       if (event.targetId === state.transfer.sourceId) return err(state, TRANSFER_INVALID, event);
-      const newRing = ringAfterTransferFocus(state.ring, event.targetId, state.transfer.sourceId);
+      const expected = TRANSFER_MATRIX[state.transfer.payloadKind]?.[target.kind];
+      if (!expected || expected !== event.outcomeKind) return err(state, TRANSFER_INVALID, event);
+      const newRing = pairFront(state.ring, event.targetId, state.transfer.sourceId);
       const newHistory = pushHistory(state.history, state.ring);
       return ok(Object.freeze({
         ...state, ring: newRing, history: newHistory, transfer: null,
@@ -225,7 +216,6 @@ export function step(state, rawEvent) {
     }
 
     case 'BACK': {
-      // M15 priority: input > transfer > history.
       if (state.input) return step(state, { type: 'INPUT_END', outcome: 'cancel' });
       if (state.transfer) return step(state, { type: 'TRANSFER_CANCEL' });
       const { history, top } = popHistory(state.history);
@@ -233,15 +223,12 @@ export function step(state, rawEvent) {
       return ok(Object.freeze({ ...state, ring: top, history }), event);
     }
 
-    case 'RESIZE': {
+    case 'RESIZE':
       return noop(state, event);
-    }
   }
   return err(state, BAD_EVENT, event);
 }
 
-// Frame: per-actor appearance summary. Used by the renderer (S13) and by
-// the Python ctypes path (S9). Deterministic given state + level table.
 export function frame(state, levelTable) {
   const out = [];
   for (let rank = 0; rank < state.ring.length; rank++) {
@@ -253,23 +240,13 @@ export function frame(state, levelTable) {
     const themeTable = levelTable && levelTable.themes ? levelTable.themes.light : null;
     const appearance = themeTable ? themeTable.table[level] : null;
     out.push({
-      id: a.id,
-      kind: a.kind,
-      rank,
-      level,
-      docRank: dRank,
-      slot,
+      id: a.id, kind: a.kind, rank, level, docRank: dRank, slot,
       appearance: appearance ? { ...appearance } : null,
     });
   }
   return Object.freeze(out);
 }
 
-// Stable hash of the ring order + input/transfer flags + history depth.
-// Two states with identical hashes must be byte-identical for our purposes;
-// M4 and M5 rely on that. Includes the full ring, the current input/transfer
-// flags, and the top of history. NOT the pointer epoch — that is metadata
-// whose restoration rule is spelled out in INPUT_BEGIN / TRANSFER_COPY.
 export function hashState(state) {
   const payload = {
     ring: state.ring.map((a) => ({ id: a.id, kind: a.kind })),
