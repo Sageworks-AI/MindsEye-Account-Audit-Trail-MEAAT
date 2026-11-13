@@ -1,12 +1,19 @@
 // Deterministic screen-space solver. Inputs are plain card specs and a
 // viewport { w, h } in pixels; outputs are rects in the same pixel units.
 // Templates: 1 full; 2 split along the longer axis; 3 one large plus two
-// stacked; 4 a 2x2 grid. Weights are integers; apportionment uses the
-// largest-remainder (Hamilton) method so parts sum exactly to the whole and
-// ties go to the lower index. No floats anywhere.
+// stacked; 4 a 2x2 grid.
+//
+// S4-close: the 3-pane template now follows the spec — one large pane of 60
+// percent plus two stacked of 40 percent — instead of deriving the large
+// share from weights. Weights only choose which pane is large (largest
+// weight, ties to the lowest index) and split the two small panes among
+// themselves. Landscape and portrait both use 600:400 apportionment on the
+// long axis. This is the "60 percent rule" recorded in README #22.
 export const DEFAULT_GUTTER = 8;
 export const DEFAULT_MIN_SIZE = Object.freeze({ w: 200, h: 150 });
 
+// Largest-remainder (Hamilton) apportionment; parts sum exactly to `total`;
+// ties go to the lower index. No floats.
 function apportion(total, weights) {
   const sum = weights.reduce((a, b) => a + b, 0);
   if (sum <= 0) throw new Error('apportion: weights sum must be positive');
@@ -41,6 +48,12 @@ function twoPaneRects(w, h, gutter, weights) {
   ];
 }
 
+// The 600:400 split is the spec's "one large pane of 60 percent plus two
+// stacked". Weights only choose which pane is large and split the two small
+// panes among themselves; they never move the large/small boundary.
+const THREE_LARGE_SHARE = 600;
+const THREE_SMALL_SHARE = 400;
+
 function threePaneRects(w, h, gutter, weights) {
   const largeIdx = argmax(weights);
   const others = [0, 1, 2].filter((i) => i !== largeIdx);
@@ -48,7 +61,7 @@ function threePaneRects(w, h, gutter, weights) {
   const out = new Array(3);
   if (w >= h) {
     const totalW = w - gutter;
-    const [largeW, smallW] = apportion(totalW, [weights[largeIdx], weights[i1] + weights[i2]]);
+    const [largeW, smallW] = apportion(totalW, [THREE_LARGE_SHARE, THREE_SMALL_SHARE]);
     const totalH = h - gutter;
     const [h1, h2] = apportion(totalH, [weights[i1], weights[i2]]);
     out[largeIdx] = { x: 0, y: 0, w: largeW, h };
@@ -56,7 +69,7 @@ function threePaneRects(w, h, gutter, weights) {
     out[i2]       = { x: largeW + gutter, y: h1 + gutter, w: smallW, h: h2 };
   } else {
     const totalH = h - gutter;
-    const [largeH, smallH] = apportion(totalH, [weights[largeIdx], weights[i1] + weights[i2]]);
+    const [largeH, smallH] = apportion(totalH, [THREE_LARGE_SHARE, THREE_SMALL_SHARE]);
     const totalW = w - gutter;
     const [w1, w2] = apportion(totalW, [weights[i1], weights[i2]]);
     out[largeIdx] = { x: 0, y: 0, w, h: largeH };
