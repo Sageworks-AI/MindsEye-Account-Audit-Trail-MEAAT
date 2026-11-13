@@ -1,29 +1,21 @@
-// Deterministic screen-space solver. Inputs are plain card specs and a
-// viewport { w, h } in pixels; outputs are rects in the same pixel units.
-// Templates: 1 full; 2 split along the longer axis; 3 one large plus two
-// stacked; 4 a 2x2 grid.
+// Deterministic screen-space solver. Same public API as S4-close
+// (solve, DEFAULT_GUTTER, DEFAULT_MIN_SIZE), but the rectangle math is now
+// delegated to space/templates.mjs so 600:400 on the long axis lives in one
+// place (space) and both backends share it. Pixels are converted to cpt
+// (1 px = 75 cpt) at entry and back at exit; per README §px rects, floor
+// each edge independently so px rects stay disjoint and inside the
+// viewport even when cpt coordinates leave a sub-pixel remainder.
 //
-// S4-close: the 3-pane template now follows the spec — one large pane of 60
-// percent plus two stacked of 40 percent — instead of deriving the large
-// share from weights. Weights only choose which pane is large (largest
-// weight, ties to the lowest index) and split the two small panes among
-// themselves. Landscape and portrait both use 600:400 apportionment on the
-// long axis. This is the "60 percent rule" recorded in README #22.
-export const DEFAULT_GUTTER = 8;
-export const DEFAULT_MIN_SIZE = Object.freeze({ w: 200, h: 150 });
+// Reordering: for n=2 and n=3 the pane with the largest weight (ties to
+// lower index) becomes the focal pane and is placed in the large slot by
+// space/templates. n=1 has one pane; n=4 is a 2x2 grid in which weights are
+// intentionally ignored (README #22), so no reordering is applied.
+import { chooseTemplate, DEFAULT_GUTTER_CPT } from '../space/index.mjs';
 
-// Largest-remainder (Hamilton) apportionment; parts sum exactly to `total`;
-// ties go to the lower index. No floats.
-function apportion(total, weights) {
-  const sum = weights.reduce((a, b) => a + b, 0);
-  if (sum <= 0) throw new Error('apportion: weights sum must be positive');
-  const parts = weights.map((w) => Math.floor((total * w) / sum));
-  const rem = weights.map((w, i) => total * w - parts[i] * sum);
-  let left = total - parts.reduce((a, b) => a + b, 0);
-  const order = weights.map((_, i) => i).sort((a, b) => rem[b] - rem[a] || a - b);
-  for (let k = 0; left > 0; k++, left--) parts[order[k]] += 1;
-  return parts;
-}
+const PT_PER_PX = 75n;
+
+export const DEFAULT_GUTTER = Number(DEFAULT_GUTTER_CPT / PT_PER_PX); // 8
+export const DEFAULT_MIN_SIZE = Object.freeze({ w: 200, h: 150 });
 
 function argmax(arr) {
   let best = 0;
@@ -31,67 +23,12 @@ function argmax(arr) {
   return best;
 }
 
-function twoPaneRects(w, h, gutter, weights) {
-  if (w >= h) {
-    const totalW = w - gutter;
-    const [w1, w2] = apportion(totalW, weights);
-    return [
-      { x: 0, y: 0, w: w1, h },
-      { x: w1 + gutter, y: 0, w: w2, h },
-    ];
-  }
-  const totalH = h - gutter;
-  const [h1, h2] = apportion(totalH, weights);
-  return [
-    { x: 0, y: 0, w, h: h1 },
-    { x: 0, y: h1 + gutter, w, h: h2 },
-  ];
-}
-
-// The 600:400 split is the spec's "one large pane of 60 percent plus two
-// stacked". Weights only choose which pane is large and split the two small
-// panes among themselves; they never move the large/small boundary.
-const THREE_LARGE_SHARE = 600;
-const THREE_SMALL_SHARE = 400;
-
-function threePaneRects(w, h, gutter, weights) {
-  const largeIdx = argmax(weights);
-  const others = [0, 1, 2].filter((i) => i !== largeIdx);
-  const [i1, i2] = others;
-  const out = new Array(3);
-  if (w >= h) {
-    const totalW = w - gutter;
-    const [largeW, smallW] = apportion(totalW, [THREE_LARGE_SHARE, THREE_SMALL_SHARE]);
-    const totalH = h - gutter;
-    const [h1, h2] = apportion(totalH, [weights[i1], weights[i2]]);
-    out[largeIdx] = { x: 0, y: 0, w: largeW, h };
-    out[i1]       = { x: largeW + gutter, y: 0, w: smallW, h: h1 };
-    out[i2]       = { x: largeW + gutter, y: h1 + gutter, w: smallW, h: h2 };
-  } else {
-    const totalH = h - gutter;
-    const [largeH, smallH] = apportion(totalH, [THREE_LARGE_SHARE, THREE_SMALL_SHARE]);
-    const totalW = w - gutter;
-    const [w1, w2] = apportion(totalW, [weights[i1], weights[i2]]);
-    out[largeIdx] = { x: 0, y: 0, w, h: largeH };
-    out[i1]       = { x: 0, y: largeH + gutter, w: w1, h: smallH };
-    out[i2]       = { x: w1 + gutter, y: largeH + gutter, w: w2, h: smallH };
-  }
-  return out;
-}
-
-function fourPaneRects(w, h, gutter) {
-  const totalW = w - gutter;
-  const totalH = h - gutter;
-  const w1 = Math.floor(totalW / 2);
-  const w2 = totalW - w1;
-  const h1 = Math.floor(totalH / 2);
-  const h2 = totalH - h1;
-  return [
-    { x: 0,          y: 0,          w: w1, h: h1 },
-    { x: w1 + gutter, y: 0,         w: w2, h: h1 },
-    { x: 0,          y: h1 + gutter, w: w1, h: h2 },
-    { x: w1 + gutter, y: h1 + gutter, w: w2, h: h2 },
-  ];
+function cptRectToPx(r) {
+  const left = Number(r.x / PT_PER_PX);
+  const top = Number(r.y / PT_PER_PX);
+  const right = Number((r.x + r.w) / PT_PER_PX);
+  const bottom = Number((r.y + r.h) / PT_PER_PX);
+  return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
 export function solve(cards, viewport, opts = {}) {
@@ -113,19 +50,38 @@ export function solve(cards, viewport, opts = {}) {
   }
   const gutter = opts.gutter ?? DEFAULT_GUTTER;
   const minSize = opts.minSize ?? DEFAULT_MIN_SIZE;
-  const { w, h } = viewport;
 
-  let rects;
-  if (n === 1)      rects = [{ x: 0, y: 0, w, h }];
-  else if (n === 2) rects = twoPaneRects(w, h, gutter, weights);
-  else if (n === 3) rects = threePaneRects(w, h, gutter, weights);
-  else              rects = fourPaneRects(w, h, gutter);
+  if (n === 1) {
+    const rect = { x: 0, y: 0, w: viewport.w, h: viewport.h };
+    if (rect.w < minSize.w || rect.h < minSize.h) {
+      return { error: `pane 0 too small: ${rect.w}x${rect.h} < ${minSize.w}x${minSize.h}` };
+    }
+    return { rects: [rect] };
+  }
+
+  const wCpt = BigInt(viewport.w) * PT_PER_PX;
+  const hCpt = BigInt(viewport.h) * PT_PER_PX;
+  const gutterCpt = BigInt(gutter) * PT_PER_PX;
+
+  const shouldReorder = n === 2 || n === 3;
+  const focalIdx = shouldReorder ? argmax(weights) : 0;
+  const orderedWeights = shouldReorder
+    ? [...weights.slice(focalIdx), ...weights.slice(0, focalIdx)].map((w) => BigInt(w))
+    : weights.map((w) => BigInt(w));
+
+  const template = chooseTemplate(n);
+  const orderedRects = template(wCpt, hCpt, gutterCpt, orderedWeights);
+
+  const rectsCpt = new Array(n);
+  for (let k = 0; k < n; k++) {
+    const origIdx = shouldReorder ? (k + focalIdx) % n : k;
+    rectsCpt[origIdx] = orderedRects[k];
+  }
+  const rects = rectsCpt.map(cptRectToPx);
 
   for (let i = 0; i < rects.length; i++) {
     if (rects[i].w < minSize.w || rects[i].h < minSize.h) {
-      return {
-        error: `pane ${i} too small: ${rects[i].w}x${rects[i].h} < ${minSize.w}x${minSize.h}`,
-      };
+      return { error: `pane ${i} too small: ${rects[i].w}x${rects[i].h} < ${minSize.w}x${minSize.h}` };
     }
   }
   return { rects };
