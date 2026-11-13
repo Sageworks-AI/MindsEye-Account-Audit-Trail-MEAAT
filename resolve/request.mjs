@@ -1,10 +1,13 @@
-// Request schema and validation. The request shape is fixed by the base spec:
-// { cards, period, focus?, compare?, mode, trail? }. Validation is shape-only;
-// semantic checks (does this card type need from/to) live in the card
-// builders, so a shape-valid request can still fail later with a clear error
-// from the builder rather than from this module.
-import { REGISTRY } from '../core/cards/index.mjs';
-import { isValidDate } from '../core/time.mjs';
+// Request schema and validation. Shape-only; semantic checks (does this card
+// type need from/to) live in the card builders, so a shape-valid request can
+// still fail later with a clear error from the builder rather than from here.
+//
+// S4-close: CARD_TYPES comes from bridge/schema.mjs (pure frozen data
+// re-exported from core/schema.mjs) instead of the REGISTRY, so resolve does
+// not import core/cards/index.mjs and the boundary check passes.
+// isValidDate comes from resolve/dates.mjs (no imports) for the same reason.
+import { CARD_TYPES } from '../bridge/schema.mjs';
+import { isValidDate } from './dates.mjs';
 
 export const MODES = Object.freeze(['read', 'input', 'trail']);
 export const MAX_CARDS = 4;
@@ -56,7 +59,7 @@ export function validateRequest(req) {
     if (!c || typeof c !== 'object' || Array.isArray(c)) {
       throw new Error(`request.cards[${i}] must be a plain object`);
     }
-    if (typeof c.type !== 'string' || !REGISTRY[c.type]) {
+    if (typeof c.type !== 'string' || !CARD_TYPES[c.type]) {
       throw new Error(`request.cards[${i}].type is not a known card type: ${String(c.type)}`);
     }
     if (c.section !== undefined) {
