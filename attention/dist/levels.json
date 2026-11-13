@@ -7,7 +7,7 @@
       "table": [
         { "opacity": 1000, "brightness": 1000, "saturation": 1000, "blur": 0, "shadow": 1800, "radius": 1050 },
         { "opacity": 880,  "brightness": 940,  "saturation": 900,  "blur": 0, "shadow": 900,  "radius": 900  },
-        { "opacity": 640,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
+        { "opacity": 760,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
       ]
     },
     "dark": {
@@ -16,7 +16,7 @@
       "table": [
         { "opacity": 1000, "brightness": 1000, "saturation": 1000, "blur": 0, "shadow": 1800, "radius": 1050 },
         { "opacity": 880,  "brightness": 940,  "saturation": 900,  "blur": 0, "shadow": 900,  "radius": 900  },
-        { "opacity": 640,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
+        { "opacity": 760,  "brightness": 820,  "saturation": 700,  "blur": 0, "shadow": 450,  "radius": 750  }
       ]
     }
   },
