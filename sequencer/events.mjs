@@ -2,6 +2,11 @@
 // here — everything else in the system is deterministic given the inputs.
 // Amounts are integer minor units or null; they are copies from the journal
 // and are never read back to produce financial state.
+//
+// S6: eventFromDraft() lets bridge/measure.mjs hand back a plain draft
+// (type, ref, tags, note) without importing sequencer. The bridge stays
+// inside its boundary; the caller turns drafts into events by calling this
+// function with a fresh id and timestamp.
 import { laneFor, LANES } from './lanes.mjs';
 
 export const EVENT_TYPES = Object.freeze(new Set([
@@ -11,10 +16,8 @@ export const EVENT_TYPES = Object.freeze(new Set([
   'card.hit', 'card.miss', 'card.built',
   'impact.computed', 'check.failed',
   'trail.node.added', 'trail.link.added', 'trail.saved',
-  // Addendum A — space layer
   'space.premeasured', 'space.laid_out', 'space.reconciled',
   'space.degraded', 'space.rejected', 'space.violation', 'space.fallback',
-  // Addendum B — attention layer
   'attention.shifted', 'attention.input_begin', 'attention.input_end',
   'attention.transfer_armed', 'attention.transfer_pasted',
   'attention.transfer_cancelled', 'attention.rejected',
@@ -62,4 +65,21 @@ export function makeEvent({ id, type, source, ref, amount, tags, note, ts }) {
     e.note = note;
   }
   return Object.freeze(e);
+}
+
+// Bridge-facing helper. The draft is a plain object as returned by
+// bridge/measure.mjs; this function is the only place a draft becomes a
+// real event. Caller supplies the id and ts (both required for determinism
+// outside of the log's auto-numbering).
+export function eventFromDraft(draft, { id, ts, source = 'bridge' }) {
+  if (!draft || typeof draft !== 'object') throw new Error('eventFromDraft: draft required');
+  if (typeof draft.type !== 'string') throw new Error('eventFromDraft: draft.type required');
+  return makeEvent({
+    id, ts, source,
+    type: draft.type,
+    ref: draft.ref || {},
+    amount: draft.amount,
+    tags: draft.tags,
+    note: draft.note,
+  });
 }
