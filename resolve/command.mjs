@@ -5,8 +5,12 @@
 // client, not from the grammar. A future LLM interpreter plugs in at the
 // same interface and its output is still validated by validateRequest(), so
 // it can only propose a request, never post an entry.
+//
+// S4-close: quarterRange comes from resolve/dates.mjs (no imports) instead
+// of core/time.mjs, so command.mjs imports only the bridge schema route and
+// its own siblings.
 import { validateRequest } from './request.mjs';
-import { quarterRange } from '../core/time.mjs';
+import { quarterRange } from './dates.mjs';
 
 const CARD_ALIASES = Object.freeze([
   { type: 'balance_sheet',    forms: ['balance sheet', 'bs'] },
@@ -44,8 +48,6 @@ function stripPeriod(text) {
   const asAtMatch = /\s+as\s+(?:at|of)\s+(\d{4}-\d{2}-\d{2})\s*$/i.exec(text);
   if (asAtMatch) {
     const d = asAtMatch[1];
-    // Instant cards use asOf; range cards fall back to from=to=X. Setting
-    // all three means either shape resolves correctly from the same input.
     return { body: text.slice(0, asAtMatch.index).trim(), period: { asOf: d, from: d, to: d } };
   }
   return { body: text, period: null };
@@ -57,7 +59,6 @@ export function interpret(text, context = {}) {
   if (!trimmed) return { ok: false, error: 'empty command' };
   const t = trimmed.toLowerCase();
 
-  // mode X
   const modeMatch = /^mode\s+(read|input|trail)$/i.exec(t);
   if (modeMatch) {
     return finish({
@@ -67,7 +68,6 @@ export function interpret(text, context = {}) {
     }, { periodRequired: false });
   }
 
-  // trail from N
   const trailMatch = /^trail\s+from\s+(\d+)$/i.exec(t);
   if (trailMatch) {
     return finish({
@@ -78,7 +78,6 @@ export function interpret(text, context = {}) {
     }, { periodRequired: false });
   }
 
-  // receipt N
   const receiptMatch = /^receipt\s+(\d+)$/i.exec(t);
   if (receiptMatch) {
     return finish({
@@ -88,7 +87,6 @@ export function interpret(text, context = {}) {
     }, { periodRequired: false });
   }
 
-  // compare Qn with Qm
   const compareMatch = /^compare\s+q([1-4])\s+(?:with|and)\s+q([1-4])$/i.exec(t);
   if (compareMatch) {
     const year = context.activeYear ||
@@ -107,11 +105,9 @@ export function interpret(text, context = {}) {
     }, { periodRequired: false });
   }
 
-  // From here on the command may carry a period clause.
   const { body: stripped, period: periodFromCmd } = stripPeriod(trimmed);
   const body = stripped.toLowerCase();
 
-  // show impact of N on <card>
   const impactMatch = /^show\s+impact\s+of\s+(\d+)\s+on\s+(.+)$/i.exec(body);
   if (impactMatch) {
     const cardType = matchCardName(impactMatch[2]);
@@ -124,7 +120,6 @@ export function interpret(text, context = {}) {
     }, { periodRequired: true });
   }
 
-  // open A and B [for …]
   let cardsPart = body;
   if (cardsPart.startsWith('open ')) cardsPart = cardsPart.slice(5).trim();
   if (!cardsPart) return { ok: false, error: 'no card named in command' };
