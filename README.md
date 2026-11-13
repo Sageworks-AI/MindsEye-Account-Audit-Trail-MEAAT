@@ -12,15 +12,17 @@ time, no credentials anywhere in the repo.
 
 ## Current status
 
-S0 is done. The files for S1 to S4 (`core/`, `store/`, `sequencer/`,
-`resolve/`, `space/` JS twin) exist and are being brought to a green suite in
-nine stabilisation batches (B1 to B9). S1 to S4 are marked **done** in the
-table below only when `npm test` reports 0 failures and the boundary check
-prints `boundary check: OK`. S5 onward has not been started.
+S0 is done. S1 to S4 are being brought to a green suite in nine stabilisation
+batches (B1 to B9). S5's C++ sources, ABI, CMake, parity and manifest tooling
+are **done at source level**; the wasm binary itself has not been built yet in
+this checkout, and is not required for `npm test` or for the JS twin to run.
+S6 onward has not been started.
 
-Only these commands work today: `npm install`, `npm test`, `npm run verify`
-and `npm run check-boundaries`. The rest of the scripts in `package.json` are
-placeholders for later stages.
+Only these commands work today: `npm install`, `npm test`, `npm run verify`,
+`npm run check-boundaries`, `npm run verify:space`, `npm run build:space`
+(requires Emscripten), `npm run test:cpp` (requires cmake + a compiler),
+`npm run gen:space-golden`. Everything else in `package.json` is a
+placeholder for a later stage.
 
 Longer documentation lives in the project wiki: architecture, module
 boundaries, ledger and cards, space layout engine, resolve layer, testing and
@@ -67,55 +69,48 @@ guards, roadmap and conventions.
 ## Running
 
 Works today (needs Node 20 or newer):
-
-```
 npm install
-npm test               # node:test suites + boundary check
+npm test # node:test suites + boundary check + verify:space
 npm run check-boundaries
-npm run verify         # verifies data/journal.jsonl hash chain
-```
+npm run verify:space # manifest check (prints a notice if no wasm built)
+npm run verify # verifies data/journal.jsonl hash chain
+
+
+Optional, requires a C++ toolchain:
+npm run build:space # Emscripten -> space/dist/space.wasm + manifest.json
+npm run test:cpp # cmake + native tests (skipped without tools)
+npm run gen:space-golden # regenerate golden vectors from the JS twin ABI
+
 
 Available once the later stages are built (S11 to S13):
+npm run report
+npm run dev
+npm start
+npm run demo
 
-```
-npm run report # out/report.html + out/report.json; non-zero on any failed check
-npm run dev # server on 127.0.0.1:4000 + Vite client (Unix/macOS)
-npm start # production server serving the built client
-npm run demo # seeds the demo ledger in memory and prints card summaries
-```
 
-Optional, only needed when changing C++ or the Python conductor:
 
-```
-npm run build:space # Emscripten build of space/cpp → space/dist/space.wasm
-npm run build:attention # Emscripten build of attention/cpp → attention/dist/attention.wasm
-npm run conduct # Python 3.10+ regenerates choreographies, storyboards, CSS
-npm run conduct:verify # verifies committed conductor outputs
-```
-
-`npm test` and `npm run report` use committed wasm binaries plus their JS
-twins; no C++ toolchain and no Python are required.
+`npm test` and `npm run report` use the JS twin and, when present, the
+committed wasm. Neither requires a C++ toolchain or Python.
 
 ## Repository layout
-
-```
-core/ money, time, canonical, hash, accounts, ledger, checks, cards, impact, trail
+core/ money, time, canonical, hash, accounts, ledger, checks, cards, impact, trail, schema
 store/ journalFile, journalMemory, cardStore, trailStore
 sequencer/ events, lanes, buckets, log, strip
-resolve/ request, layout, tiers, plan, command
+resolve/ request, layout, tiers, plan, command, dates
 view/ pure SVG builders (text, theme, primitives, slip, impact, trail, strip)
 space/ JS twin, C++ sources, reference data, wasm
 attention/ JS twin, C++ sources, level table, wasm, CSS emitter
-bridge/ measure.mjs, attention.mjs, contract.md
+bridge/ schema.mjs, measure.mjs, attention.mjs, contract.md
 server/ node:http, router, routes, sse, errors
 app/ Vite + React client (mounts only; drawing is from view/)
 demo/ demo.ledger.mjs, report.mjs
 conductor/ Python 3.10+ (build-time only); workflows, choreographies, fuzz
 test/ node:test suites
-scripts/ check-boundaries, verify-journal, verify-space, verify-attention,
-emit-attention-css
+scripts/ check-boundaries, verify-journal, build-space, test-cpp,
+verify-space, gen-space-golden, verify-attention, emit-attention-css
 data/ runtime only (gitignored): journal.jsonl, events.jsonl, trails/, cards-cache.json
-```
+
 
 The server binds `127.0.0.1` only. There is **no authentication in v1** — that
 is a known limit; do not expose this server on a public interface.
@@ -169,20 +164,18 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 8. **Centipoint scale.** 1 cpt = 1/100 pt. 1 CSS px = 75 cpt. Paper sizes in
    points use conventional PDF roundings (A4 = 595×842 pt). Aspect ratios are
    exact rationals built from those integers. Documented further in
-   `space/README.md` (S4).
+   `space/README.md` (S4) and `space/ABI.md` (S5).
 
 9. **Reference defaults for `space/reference/documents.json`.** Margins
    ~20 mm (57 pt), body 10 pt, headings 12–14 pt, captions 8 pt, leading 1.2×
    body. These are reference defaults, not legal or regulatory standards.
-   Each value ships with a comment explaining it; see S4.
 
 10. **`DISPLAY_MAX` and the "in thousands" switch.** When a formatted amount
     exceeds `DISPLAY_MAX` characters, the card deterministically switches to
-    "in thousands" and states this in the page header. Set in
-    `space/reference/metrics.json` (S4).
+    "in thousands" and states this in the page header.
 
 11. **`MIN_BODY = 9 px` (675 cpt).** Effective on-screen body size must be at
-    least 9 px, or the solver rejects the shape or tier. See S4.
+    least 9 px, or the solver rejects the shape or tier.
 
 12. **Focus tolerance = 4 px (300 cpt).** Anchor invariance: after a relayout,
     the anchor stays within 4 px of its previous screen position (or inside
@@ -207,33 +200,22 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 
 17. **`npm run dev` on Windows.** Uses `concurrently`. If it misbehaves on
     Windows, run `node --watch server/index.mjs` and
-    `npx vite --config app/vite.config.js` in two terminals. No code
-    workaround is provided.
+    `npx vite --config app/vite.config.js` in two terminals.
 
-18. **Node version.** `engines.node >= 20` as stated in the base layout. The
-    `--test-reporter=spec` flag and native `BigInt64Array` are both available
-    in Node 20.
+18. **Node version.** `engines.node >= 20` as stated in the base layout.
 
 19. **Boundary-check enforcement.** The matrix enforced by
-    `scripts/check-boundaries.mjs` reflects the *union* of import rules across
-    the three spec parts, with base restrictions that would prevent A or B
-    from running relaxed per assumption #1. `core/` is still restricted to
-    `node:*` plus its own relative imports; `space/` to its own folder;
-    `attention/` to its own folder. Scoped bare specifiers are matched by
-    package name (e.g. `@vitejs/plugin-react`), not by full path.
+    `scripts/check-boundaries.mjs` reflects the *union* of import rules
+    across the three spec parts, with base restrictions relaxed per #1.
+    `core/` is still restricted to `node:*` plus its own relative imports;
+    `space/` and `attention/` are self-contained. Scoped bare specifiers are
+    matched by package name.
 
-20. **Git tracking policy.** `.gitattributes` pins LF line endings
-    (`* text=auto eol=lf`) and marks `*.wasm` as binary. LF keeps manifest
-    hashes and SVG snapshot tests byte-identical across Windows/macOS/Linux;
-    the binary marker prevents Git from attempting line-ending conversion on
-    the committed wasm files. The wasm commit decision itself is recorded in
-    #2; `.gitignore` therefore excludes `app/dist/` and native build
-    directories but explicitly permits `space/dist/`, `attention/dist/` and
-    `conductor/out/`.
+20. **Git tracking policy.** `.gitattributes` pins LF line endings and marks
+    `*.wasm` as binary. The wasm commit decision itself is #2.
 
 21. **License.** MIT. See `LICENSE`. This project builds on ideas and a
-    client skeleton from MindsEye (MIT, (c) 2025 Peace Thabiwa). The
-    attribution is preserved in the License section below.
+    client skeleton from MindsEye (MIT, (c) 2025 Peace Thabiwa).
 
 22. **Three-pane rule (60 percent).** In a three-pane layout the focal pane
     takes 60 percent of the long axis and the other two share 40 percent.
@@ -243,36 +225,71 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 23. **Narrower QUARTER and STRIP pages.** For archetypes whose FULL page is
     wider than 420 pt, QUARTER is 420 pt wide and STRIP is 360 pt wide, so
     body text stays at or above `MIN_BODY` in a pane at 1280x720. `MIN_BODY`
-    itself is not lowered. Reasoning is recorded in `space/README.md`.
+    itself is not lowered.
 
 24. **Schema route for `resolve`.** `resolve/` must not import `core/` or
-    `store/`. Card type data (period kind, minimum tier) reaches it through
-    `bridge/schema.mjs`, which re-exports `core/schema.mjs` (plain data, no
-    imports). `bridge/` may import only that one file from `core/`; the
-    boundary checker enforces this at file level.
+    `store/`. Card type data reaches it through `bridge/schema.mjs`, which
+    re-exports `core/schema.mjs` (plain data, no imports). The boundary
+    checker enforces this at file level.
 
-25. **`resolve/dates.mjs` mirrors `core/time.mjs`.** The pure date helpers are
-    copied so `resolve/` stays off `core/`. A parity test keeps the two
+25. **`resolve/dates.mjs` mirrors `core/time.mjs`.** The pure date helpers
+    are copied so `resolve/` stays off `core/`. A parity test keeps the two
     identical on seeded inputs.
 
 26. **`plan()` takes its cache-key function from the caller.** Callers pass
     `CardStore.cacheKey` as `opts.cacheKey`. `plan()` returns an error if it
-    is missing. This removes the `resolve` to `store` import.
+    is missing.
 
-27. **Copyright line in `LICENSE`.** The owner changed it on purpose and it is
-    never edited by tooling. The scaffold test checks only its structure
+27. **Copyright line in `LICENSE`.** The owner changed it on purpose and it
+    is never edited by tooling. The scaffold test checks only its structure
     (starts with `MIT License`, has a year and a name), not the name itself.
 
-28. **L7 and L8 arrive in S6.** The two space laws that involve the bridge are
-    tested when `bridge/` is built. The property test file says so in its
-    header.
+28. **L7 and L8 arrive in S6.** The two space laws that involve the bridge
+    are tested when `bridge/` is built.
 
-29. **Constancy guards.** Three guards keep earlier stages stable while later
-    ones are built: a stage manifest (`scripts/stages.json`) checked against
-    the status table below, an API-surface snapshot of the public modules, and
-    golden outputs (demo card hashes and layout rectangles). Golden files
-    change only on purpose, by running `npm run golden:update` and committing
-    the result. They are never edited by hand.
+29. **Constancy guards.** Three guards keep earlier stages stable while
+    later ones are built: a stage manifest (`scripts/stages.json`) checked
+    against the status table below, an API-surface snapshot of the public
+    modules, and golden outputs (demo card hashes and layout rectangles).
+    Golden files change only on purpose, by running `npm run golden:update`
+    and committing the result. They are never edited by hand.
+
+30. **Portable 128-bit arithmetic.** `space/cpp/fixed.hpp` implements
+    64×64→128 multiply and 128÷64 divide from 64-bit limbs, without
+    `__int128`, compiler builtins, or floating point. The same source
+    compiles under MSVC, MinGW, clang, gcc and Emscripten. `muldiv_floor`
+    does floor rounding on the sign-corrected magnitude, then reapplies the
+    sign, matching `space/js/fixed.mjs` exactly (parity is golden-tested).
+
+31. **Golden vectors.** The C++ ABI's parity with the JS twin is enforced
+    by line-based text vectors in `space/cpp/test/golden/`, generated by
+    `scripts/gen-space-golden.mjs` using `space/js/abi.mjs` as the oracle.
+    The native test runner replays them; `test/space/parity.test.mjs` also
+    replays them against the JS twin, so both ends are checked
+    independently. Golden files change only when the twin changes on
+    purpose and `npm run gen:space-golden` is run to regenerate them.
+
+32. **CRLF-normalised hashing.** `space/dist/manifest.json` stores SHA-256
+    of every C++ source with `\r\n` normalised to `\n` before hashing, so a
+    Windows checkout and a Unix checkout produce the same hash for the same
+    logical source. `scripts/verify-space.mjs` applies the same
+    normalisation, so "rebuild required" fires only on a real change.
+
+33. **Standalone wasm.** `scripts/build-space.mjs` builds with
+    `-sSTANDALONE_WASM=1 -sALLOW_MEMORY_GROWTH=0 -sINITIAL_MEMORY=4MiB
+    -sWASM_BIGINT=1 --no-entry`. No JS runtime is generated: the module
+    exports the C ABI functions, the memory, and the scratch pointer
+    directly. `space/index.mjs` loads the bytes synchronously and its
+    `getWasmBackend()` helper marshals typed arrays through
+    `BigInt64Array`, which the golden vectors and parity tests exercise.
+
+34. **Empty `space/dist/`.** A fresh clone has no `space/dist/space.wasm`
+    and no `space/dist/manifest.json`. `npm test` still passes: the JS twin
+    is authoritative, `verify:space` prints "no wasm built yet, JS twin in
+    use" and exits 0, and wasm-specific parity assertions skip. A developer
+    who wants the second implementation runs `npm run build:space` with
+    Emscripten installed and commits both files; `space/dist/.gitkeep`
+    keeps the directory present either way.
 
 ## Status by stage
 
@@ -283,7 +300,7 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 | S2 | `store/` + `sequencer/` | stabilising |
 | S3 | `resolve/` | stabilising |
 | S4 | `space/` JS twin + reference data | stabilising |
-| S5 | `space/` C++ + wasm + parity | pending |
+| S5 | `space/` C++ + wasm + parity | **sources done, wasm pending local build** |
 | S6 | `bridge/` | pending |
 | S7 | `attention/` JS twin + level table | pending |
 | S8 | `attention/` C++ + wasm + CSS emitter | pending |
@@ -295,7 +312,11 @@ An extension that A or B needs to make a feature reachable is allowed and noted.
 | S14 | Final integration, README final pass, DoD checklist | pending |
 
 S1 to S4 change from *stabilising* to **done** when the stabilisation batches
-pass (`npm test`: 0 failures, `boundary check: OK`).
+pass (`npm test`: 0 failures, `boundary check: OK`). S5's row means the C++
+sources, CMake, ABI, parity tests and manifest tooling are complete; the
+`space/dist/space.wasm` binary itself is built on the developer's machine
+via `npm run build:space` and committed afterwards, and is not required for
+`npm test` to pass.
 
 ## Known limitations (v1)
 
