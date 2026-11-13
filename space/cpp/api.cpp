@@ -5,9 +5,13 @@
 // Every function returns the OUTPUT LENGTH in int64 slots (>= 0) on success,
 // or a negative error code. Inputs and outputs both start with a version
 // word (= space_version()) so a mismatch is caught immediately.
+//
+// (Replaces PART 4's version: uses SPACE_EXPORT so MSVC compiles cleanly.
+// The function bodies are identical.)
 #include <cstdint>
 #include <cstring>
 
+#include "export.hpp"
 #include "fixed.hpp"
 #include "rational.hpp"
 #include "apportion.hpp"
@@ -19,17 +23,11 @@
 #include "solve.hpp"
 #include "params.hpp"
 
-// Exported via emscripten when building wasm; visible as normal functions
-// when built natively for tests. The scratch buffer is a fixed static array
-// so no dynamic allocation ever occurs in the ABI layer.
-extern "C" {
-
 static int64_t g_scratch[131072]; // 1 MiB; documented in space/ABI.md
 
 static constexpr int64_t VERSION = 1;
 static constexpr int64_t SCRATCH_SLOTS = 131072;
 
-// Error codes; mirrored in space/ABI.md.
 enum {
     E_OK = 0,
     E_BAD_VERSION = -1,
@@ -56,22 +54,17 @@ static int32_t map_error(int32_t impl) {
     }
 }
 
-__attribute__((visibility("default")))
-int64_t space_version(void) { return VERSION; }
+SPACE_EXPORT int64_t space_version(void) { return VERSION; }
 
-__attribute__((visibility("default")))
-int64_t space_scratch_ptr(void) {
+SPACE_EXPORT int64_t space_scratch_ptr(void) {
     return (int64_t)(uintptr_t)&g_scratch[0];
 }
 
-__attribute__((visibility("default")))
-int64_t space_scratch_size(void) { return SCRATCH_SLOTS; }
+SPACE_EXPORT int64_t space_scratch_size(void) { return SCRATCH_SLOTS; }
 
-// ---- space_measure_text ----
 // in  = [ V, family, fontSizeCpt, cpLen, cp0 .. cp(cpLen-1) ]
 // out = [ V, widthCpt ]
-__attribute__((visibility("default")))
-int64_t space_measure_text(int64_t inLen) {
+SPACE_EXPORT int64_t space_measure_text(int64_t inLen) {
     if (inLen < 4 || inLen > SCRATCH_SLOTS / 2) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -92,11 +85,9 @@ int64_t space_measure_text(int64_t inLen) {
     return 2;
 }
 
-// ---- space_apportion ----
 // in  = [ V, total, n, w0 .. wn-1 ]
 // out = [ V, n, p0 .. pn-1 ]
-__attribute__((visibility("default")))
-int64_t space_apportion(int64_t inLen) {
+SPACE_EXPORT int64_t space_apportion(int64_t inLen) {
     if (inLen < 3) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -112,12 +103,10 @@ int64_t space_apportion(int64_t inLen) {
     return 2 + n;
 }
 
-// ---- space_claim_combine ----
-// in  = [ V, op, a_minW,a_prefW,a_maxW,a_minH,a_prefH,a_maxH,a_rows, shapesMask,
-//         b_minW,b_prefW,b_maxW,b_minH,b_prefH,b_maxH,b_rows, shapesMask ]
-// out = [ V, minW,prefW,maxW,minH,prefH,maxH, rows, shapesMask ]
-__attribute__((visibility("default")))
-int64_t space_claim_combine(int64_t inLen) {
+// in  = [ V, op, a_minW,a_prefW,a_maxW,a_minH,a_prefH,a_maxH,a_rows, a_shapes,
+//         b_minW,b_prefW,b_maxW,b_minH,b_prefH,b_maxH,b_rows, b_shapes ]
+// out = [ V, minW,prefW,maxW,minH,prefH,maxH, rows, shapes ]
+SPACE_EXPORT int64_t space_claim_combine(int64_t inLen) {
     if (inLen != 19) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -125,7 +114,6 @@ int64_t space_claim_combine(int64_t inLen) {
     if (op < 0 || op > 2) return E_BAD_ARGUMENT;
     space::Claim a{ in[2], in[3], in[4], in[5], in[6], in[7], in[8], (int32_t)in[9] };
     space::Claim b{ in[10], in[11], in[12], in[13], in[14], in[15], in[16], (int32_t)in[17] };
-    (void)in[18];
     space::Claim c;
     if (!space::combine_claim((int32_t)op, &a, &b, &c)) return E_BAD_ARGUMENT;
     if (inLen + 9 > SCRATCH_SLOTS) return E_OUTPUT_TOO_SMALL;
@@ -137,11 +125,9 @@ int64_t space_claim_combine(int64_t inLen) {
     return 9;
 }
 
-// ---- space_paginate ----
 // in  = [ V, archetypeIdx, shapeClass, rows ]
 // out = [ V, nPages, perPage, from0,to0, from1,to1, ... ]
-__attribute__((visibility("default")))
-int64_t space_paginate(int64_t inLen) {
+SPACE_EXPORT int64_t space_paginate(int64_t inLen) {
     if (inLen != 4) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -166,18 +152,16 @@ int64_t space_paginate(int64_t inLen) {
     out[1] = nPages;
     out[2] = perPage;
     for (int32_t i = 0; i < nPages; ++i) {
-        out[3 + i * 2] = pages[i].from;
+        out[3 + i * 2]     = pages[i].from;
         out[3 + i * 2 + 1] = pages[i].to;
     }
     return outLen;
 }
 
-// ---- space_anchor ----
 // in  = [ V, oX,oY,oW,oH, oNum,oDen, aPageX,aPageY,
 //            nX,nY,nW,nH, nNum,nDen, tolCpt, viewportW, viewportH ]
 // out = [ V, offX, offY ]
-__attribute__((visibility("default")))
-int64_t space_anchor(int64_t inLen) {
+SPACE_EXPORT int64_t space_anchor(int64_t inLen) {
     if (inLen != 18) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -187,7 +171,6 @@ int64_t space_anchor(int64_t inLen) {
     space::Rect newRect{in[9], in[10], in[11], in[12]};
     space::Rational newScale{in[13], in[14]};
     int64_t tol = in[15];
-    (void)in[16]; (void)in[17];
     if (oldScale.den <= 0 || newScale.den <= 0 || tol < 0) return E_BAD_ARGUMENT;
     int64_t ox = 0, oy = 0;
     if (!space::anchor_offset(oldRect, oldScale, apx, apy, newRect, newScale, tol, &ox, &oy)) {
@@ -201,17 +184,15 @@ int64_t space_anchor(int64_t inLen) {
     return 3;
 }
 
-// ---- space_solve ----
 // in  = [ V, viewportW, viewportH, nPanes,
-//         for each pane: archetypeIdx, isBar, rowsUpper, weight ]
-//        plus optional 2 tail fields: gutter, focalOrigIdx (if inLen == 4+4*n+2)
+//         per pane: archetypeIdx, isBar, rowsUpper, weight,
+//         (optional tail) gutter, focalOrigIdx ]
 // out = [ V, nGeomPanes, focalOrigIdx,
 //         per geom pane: origIdx, rectX,rectY,rectW,rectH,
 //                        shapeClass, tier, scaleNum, scaleDen,
 //                        effectiveBodyCpt, nPages,
-//                        nPages * [from,to] ]
-__attribute__((visibility("default")))
-int64_t space_solve(int64_t inLen) {
+//                        nPages * [from, to] ]
+SPACE_EXPORT int64_t space_solve(int64_t inLen) {
     if (inLen < 4) return E_BAD_ARGUMENT;
     int64_t* in = g_scratch;
     if (in[0] != VERSION) return E_BAD_VERSION;
@@ -246,7 +227,6 @@ int64_t space_solve(int64_t inLen) {
                                     panes, 8, &nOut, &focalOrig);
     if (rc != 0) return (int64_t)map_error(rc);
 
-    // Output length.
     int64_t outLen = 3;
     for (int32_t i = 0; i < nOut; ++i) outLen += 11 + (int64_t)panes[i].nPages * 2;
     if (inLen + outLen > SCRATCH_SLOTS) return E_OUTPUT_TOO_SMALL;
@@ -271,5 +251,3 @@ int64_t space_solve(int64_t inLen) {
     }
     return outLen;
 }
-
-} // extern "C"
