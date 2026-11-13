@@ -24,8 +24,10 @@ function validateLine(line, byCode) {
   if (typeof account !== 'string' || !byCode[account]) {
     throw new Error(`unknown account: ${String(account)}`);
   }
-  const hasD = debit !== undefined && debit !== null;
-  const hasC = credit !== undefined && credit !== null;
+  // A stored (frozen) entry carries both fields with one of them 0, so a side
+  // counts as present only when it is non-zero. Re-posting stored lines works.
+  const hasD = debit !== undefined && debit !== null && debit !== 0;
+  const hasC = credit !== undefined && credit !== null && credit !== 0;
   if (hasD && hasC) throw new Error(`line on ${account}: exactly one of debit/credit`);
   if (!hasD && !hasC) throw new Error(`line on ${account}: need debit or credit`);
   const amount = hasD ? debit : credit;
@@ -233,6 +235,12 @@ export class LedgerView {
     this.#asOfSeq = asOfSeq;
     this.#excludeSeq = excludeSeq;
     this.#overlay = overlay || null;
+  }
+
+  byId(id) {
+    const e = this.entries().find((x) => x.id === id);
+    if (!e) throw new Error(`no entry with id ${String(id)} in view`);
+    return e;
   }
 
   get accounts() { return this.#parent.accounts; }
