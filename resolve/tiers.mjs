@@ -1,15 +1,22 @@
-// Tier selection from rectangle size against a fixed set of thresholds.
-// Thresholds are documented constants: below summaryBelow the card shows only
-// headline totals; between summaryBelow and standardBelow it shows sections
-// with rows; above standardBelow it also exposes account codes and drill refs.
-// The chosen tier is raised to the card type's minTier if necessary (for
-// example, a receipt cannot render below standard because it needs its line
-// table to be legible).
+// Tier selection from rectangle size. S6: thresholds are read from
+// space/index.mjs so both backends share one source of truth. The exported
+// numbers are still in CSS px (space stores them in cpt) so callers see the
+// same API as before.
+import { TIER_THRESHOLDS as SPACE_THRESHOLDS } from '../space/index.mjs';
+
+const PT_PER_PX = 75n;
+
 export const TIER_ORDER = Object.freeze(['summary', 'standard', 'full']);
 
 export const THRESHOLDS = Object.freeze({
-  summaryBelow:  { w: 320, h: 240 },
-  standardBelow: { w: 640, h: 480 },
+  summaryBelow:  {
+    w: Number(SPACE_THRESHOLDS.summaryBelow.w / PT_PER_PX),
+    h: Number(SPACE_THRESHOLDS.summaryBelow.h / PT_PER_PX),
+  },
+  standardBelow: {
+    w: Number(SPACE_THRESHOLDS.standardBelow.w / PT_PER_PX),
+    h: Number(SPACE_THRESHOLDS.standardBelow.h / PT_PER_PX),
+  },
 });
 
 export function tierIndex(tier) {
@@ -34,9 +41,6 @@ export function tierForRect(rect, { minTier = 'summary' } = {}) {
   return tier;
 }
 
-// Returns which sections of a card are visible at a given tier. `summary`
-// keeps only the totals; `standard` and `full` expose rows. The renderer in
-// S10 uses the same shape, so slicing here and slicing there agree.
 export function sliceSections(card, tier) {
   if (!card || !Array.isArray(card.sections)) {
     throw new Error('sliceSections: card with sections required');
