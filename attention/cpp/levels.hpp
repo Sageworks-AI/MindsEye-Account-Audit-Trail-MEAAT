@@ -1,8 +1,9 @@
 // Baked level table + timing. Matches attention/dist/levels.json exactly.
 // `att_levels_table` reads from here; `att_validate` cross-checks the same
-// T1–T4 rules that attention/js/levels.mjs enforces. The LUT in
-// contrast.hpp and the values here are kept in lockstep with the JSON by
-// the manifest: change the JSON, rebuild, rebuild the manifest.
+// T1–T4 rules that attention/js/levels.mjs enforces. S8 widens the accepted
+// shadow/radius ranges to 0..100000 cpt so the shipped file's shadow=1800
+// and radius=1050 parse. opacity/brightness/saturation/blur stay at
+// permille 0..1000.
 #ifndef ATTENTION_CPP_LEVELS_HPP
 #define ATTENTION_CPP_LEVELS_HPP
 
@@ -31,7 +32,6 @@ struct LevelSet {
     Timing timing;
 };
 
-// Baked from attention/dist/levels.json (2026 edition, S7).
 inline constexpr LevelSet LEVELS = {
     // light
     { { 32, 32, 32, 255, 255, 255 },
@@ -47,11 +47,6 @@ inline constexpr LevelSet LEVELS = {
     { 220, 160, 200, 240, 250, 100, 250, 1000 },
 };
 
-// T1: opacity/brightness/saturation/shadow never increase with level;
-// blur never decreases. T2: opacity step between adjacent levels >= 100.
-// T3: per-theme, per-level contrast >= floor (7000/4500/3000; under
-// prefers-contrast: more the level-2 floor is 4500). T4 is structural —
-// LevelRow has no geometry fields, so it cannot violate it.
 inline int32_t validate_level_set(const LevelSet& s, bool prefersContrastMore) {
     const ThemeTable* themes[2] = { &s.light, &s.dark };
     const int32_t floorsNormal[3] = { 7000, 4500, 3000 };
