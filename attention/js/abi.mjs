@@ -314,4 +314,256 @@ function parseEvent(scratch, offset, inLen) {
       const idRes = parseId(scratch, offset, inLen);
       if (!idRes) return null;
       offset = idRes.offset;
-      if (offset
+      if (offset >= inLen) return null;
+      const kind = Number(scratch[offset++]);
+      if (kind < 0 || kind > 2) return null;
+      return { event: { type: 'OPEN', actor: { id: idRes.id, kind: KIND_NAMES[kind] } }, offset };
+    }
+    case 1: { // CLOSE
+      const idRes = parseId(scratch, offset, inLen);
+      if (!idRes) return null;
+      return { event: { type: 'CLOSE', id: idRes.id }, offset: idRes.offset };
+    }
+    case 2: { // FOCUS
+      const idRes = parseId(scratch, offset, inLen);
+      if (!idRes) return null;
+      offset = idRes.offset;
+      if (offset >= inLen) return null;
+      const src = Number(scratch[offset++]);
+      if (src < 0 || src > 3) return null;
+      const source = ['pointer', 'keyboard', 'command', 'programmatic'][src];
+      let pointerEpoch;
+      if (source === 'pointer') {
+        if (offset >= inLen) return null;
+        pointerEpoch = Number(scratch[offset++]);
+        if (pointerEpoch < 0) return null;
+      }
+      const event = pointerEpoch !== undefined
+        ? { type: 'FOCUS', id: idRes.id, source, pointerEpoch }
+        : { type: 'FOCUS', id: idRes.id, source };
+      return { event, offset };
+    }
+    case 3: { // INPUT_BEGIN
+      if (offset >= inLen) return null;
+      const ch = Number(scratch[offset++]);
+      const channel = ['text', 'voice', 'document'][ch];
+      if (!channel) return null;
+      return { event: { type: 'INPUT_BEGIN', channel }, offset };
+    }
+    case 4: { // INPUT_END
+      if (offset >= inLen) return null;
+      const oc = Number(scratch[offset++]);
+      const outcome = ['commit', 'cancel'][oc];
+      if (!outcome) return null;
+      return { event: { type: 'INPUT_END', outcome }, offset };
+    }
+    case 5: { // TRANSFER_COPY
+      const idRes = parseId(scratch, offset, inLen);
+      if (!idRes) return null;
+      offset = idRes.offset;
+      if (offset >= inLen) return null;
+      const pk = Number(scratch[offset++]);
+      const payloadKind = ['entry', 'rows', 'row', 'period', 'node'][pk];
+      if (!payloadKind) return null;
+      return { event: { type: 'TRANSFER_COPY', sourceId: idRes.id, payloadKind }, offset };
+    }
+    case 6: { // TRANSFER_PASTE
+      const idRes = parseId(scratch, offset, inLen);
+      if (!idRes) return null;
+      offset = idRes.offset;
+      if (offset >= inLen) return null;
+      const ok = Number(scratch[offset++]);
+      const outcomeKind = ['impact', 'draft-entry', 'draft-lines', 'trail-edit', 'period-change'][ok];
+      if (!outcomeKind) return null;
+      return { event: { type: 'TRANSFER_PASTE', targetId: idRes.id, outcomeKind }, offset };
+    }
+    case 7: return { event: { type: 'TRANSFER_CANCEL' }, offset };
+    case 8: return { event: { type: 'BACK' }, offset };
+    case 9: return { event: { type: 'RESIZE' }, offset };
+    default: return null;
+  }
+}
+
+// ---- ABI functions ----
+
+export function att_version() { return Number(ATT_VERSION); }
+export function att_scratch_size() { return ATT_SCRATCH_SLOTS; }
+
+export function att_levels_table(scratch, inLen) {
+  if (inLen !== 2) return ATT_BAD_ARGUMENT;
+  if (scratch[0] !== ATT_VERSION) return ATT_BAD_VERSION;
+  const theme = Number(scratch[1]);
+  if (theme !== 0 && theme !== 1) return ATT_BAD_ARGUMENT;
+  const levels = loadLevels();
+  const t = theme === 0 ? levels.themes.light : levels.themes.dark;
+  const timing = levels.timing;
+  if (inLen + 1 + 32 > ATT_SCRATCH_SLOTS) return ATT_OUTPUT_TOO_SMALL;
+  let p = inLen;
+  scratch[p++] = ATT_VERSION;
+  for (let l = 0; l < 3; l++) {
+    const r = t.table[l];
+    scratch[p++] = BigInt(r.opacity);
+    scratch[p++] = BigInt(r.brightness);
+    scratch[p++] = BigInt(r.saturation);
+    scratch[p++] = BigInt(r.blur);
+    scratch[p++] = BigInt(r.shadow);
+    scratch[p++] = BigInt(r.radius);
+  }
+  scratch[p++] = BigInt(t.fg.r); scratch[p++] = BigInt(t.fg.g); scratch[p++] = BigInt(t.fg.b);
+  scratch[p++] = BigInt(t.bg.r); scratch[p++] = BigInt(t.bg.g); scratch[p++] = BigInt(t.bg.b);
+  scratch[p++] = BigInt(timing.durationMs.focus);
+  scratch[p++] = BigInt(timing.durationMs.inputBegin);
+  scratch[p++] = BigInt(timing.durationMs.inputEnd);
+  scratch[p++] = BigInt(timing.durationMs.transfer);
+  scratch[p++] = BigInt(timing.easing.x1);
+  scratch[p++] = BigInt(timing.easing.y1);
+  scratch[p++] = BigInt(timing.easing.x2);
+  scratch[p++] = BigInt(timing.easing.y2);
+  return 1 + 32;
+}
+
+export function att_validate(scratch, inLen) {
+  if (inLen !== 33) return ATT_BAD_ARGUMENT;
+  if (scratch[0] !== ATT_VERSION) return ATT_BAD_VERSION;
+  let p = 1;
+  const table = [];
+  for (let l = 0; l < 3; l++) {
+    const row = {
+      opacity:    Number(scratch[p++]),
+      brightness: Number(scratch[p++]),
+      saturation: Number(scratch[p++]),
+      blur:       Number(scratch[p++]),
+      shadow:     Number(scratch[p++]),
+      radius:     Number(scratch[p++]),
+    };
+    if (row.opacity    < 0 || row.opacity    > 1000)    return ATT_BAD_ARGUMENT;
+    if (row.brightness < 0 || row.brightness > 1000)    return ATT_BAD_ARGUMENT;
+    if (row.saturation < 0 || row.saturation > 1000)    return ATT_BAD_ARGUMENT;
+    if (row.blur       < 0 || row.blur       > 1000)    return ATT_BAD_ARGUMENT;
+    if (row.shadow     < 0 || row.shadow     > SHADOW_RADIUS_MAX) return ATT_BAD_ARGUMENT;
+    if (row.radius     < 0 || row.radius     > SHADOW_RADIUS_MAX) return ATT_BAD_ARGUMENT;
+    table.push(row);
+  }
+  const fg = { r: Number(scratch[p++]), g: Number(scratch[p++]), b: Number(scratch[p++]) };
+  const bg = { r: Number(scratch[p++]), g: Number(scratch[p++]), b: Number(scratch[p++]) };
+  const timing = {
+    durationMs: {
+      focus:      Number(scratch[p++]),
+      inputBegin: Number(scratch[p++]),
+      inputEnd:   Number(scratch[p++]),
+      transfer:   Number(scratch[p++]),
+    },
+    easing: {
+      x1: Number(scratch[p++]),
+      y1: Number(scratch[p++]),
+      x2: Number(scratch[p++]),
+      y2: Number(scratch[p++]),
+    },
+  };
+  const raw = {
+    version: 1,
+    themes: {
+      light: { fg, bg, table },
+      dark:  { fg, bg, table },
+    },
+    timing,
+  };
+  let code;
+  try { validateLevels(raw); code = ATT_OK; }
+  catch (e) { code = ATT_LAW_VIOLATION; }
+  if (inLen + 2 > ATT_SCRATCH_SLOTS) return ATT_OUTPUT_TOO_SMALL;
+  scratch[inLen] = ATT_VERSION;
+  scratch[inLen + 1] = BigInt(code);
+  return 2;
+}
+
+export function att_step(scratch, inLen) {
+  if (inLen < 3) return ATT_BAD_ARGUMENT;
+  if (scratch[0] !== ATT_VERSION) return ATT_BAD_VERSION;
+  const stateLen = Number(scratch[1]);
+  if (stateLen < 0 || 2 + stateLen >= inLen) return ATT_BAD_ARGUMENT;
+  const stateOff = 2;
+  const stateRes = parseState(scratch, stateOff, inLen);
+  if (!stateRes || stateRes.offset !== stateOff + stateLen) return ATT_BAD_ARGUMENT;
+  let cursor = stateRes.offset;
+  const eventLen = Number(scratch[cursor++]);
+  if (eventLen < 1 || cursor + eventLen !== inLen) return ATT_BAD_ARGUMENT;
+  const evtRes = parseEvent(scratch, cursor, inLen);
+  if (!evtRes || evtRes.offset !== cursor + eventLen) return ATT_BAD_ARGUMENT;
+
+  const twinState = makeState({
+    actors: stateRes.state.ring,
+    lastPointerEpoch: stateRes.state.lastPointerEpoch,
+  });
+  // Overwrite history and input/transfer from the parsed state; makeState
+  // zeroes them. The twin accepts plain objects for these fields.
+  const composedState = Object.freeze({
+    ...twinState,
+    ring: Object.freeze(stateRes.state.ring.map((a) => Object.freeze({ ...a }))),
+    history: Object.freeze(stateRes.state.history.map((ring) => Object.freeze(
+      ring.map((a) => Object.freeze({ ...a }))))),
+    input: stateRes.state.input
+      ? Object.freeze({ channel: stateRes.state.input.channel,
+                        snapshot: freezeSnapshot(stateRes.state.input.snapshot) })
+      : null,
+    transfer: stateRes.state.transfer
+      ? Object.freeze({ sourceId: stateRes.state.transfer.sourceId,
+                        payloadKind: stateRes.state.transfer.payloadKind,
+                        snapshot: freezeSnapshot(stateRes.state.transfer.snapshot) })
+      : null,
+    lastPointerEpoch: stateRes.state.lastPointerEpoch,
+  });
+
+  const result = twinStep(composedState, evtRes.event);
+
+  const writeStart = inLen;
+  if (writeStart + 3 > ATT_SCRATCH_SLOTS) return ATT_OUTPUT_TOO_SMALL;
+  let p = writeStart;
+  scratch[p++] = ATT_VERSION;
+  scratch[p++] = BigInt(result.code);
+
+  const isSuccess = result.code === ATT_OK || result.code === ATT_NOOP ||
+    result.code === ATT_ALREADY_FOCUSED || result.code === ATT_POINTER_STALE;
+
+  const stateStart = p;
+  let outStateLen = 0;
+  if (isSuccess) {
+    const next = emitState(scratch, p, result.state);
+    if (next < 0) return ATT_OUTPUT_TOO_SMALL;
+    outStateLen = next - stateStart;
+    p = next;
+  }
+  // Patch the outStateLen slot which was reserved after the version+code.
+  // Layout is V, code, outStateLen, <state>, frameLen, <frame>. We need to
+  // write outStateLen before <state>. Do it by re-building the whole tail.
+  // Simplest: write outStateLen into slot (writeStart + 2) then shift state
+  // right by 0 (it was already written at stateStart = writeStart+3).
+  scratch[writeStart + 2] = BigInt(outStateLen);
+
+  const frameStart = p;
+  const frameNext = emitFrame(scratch, frameStart, result.state);
+  if (frameNext < 0) return ATT_OUTPUT_TOO_SMALL;
+  const frameLen = frameNext - frameStart;
+  // Reserve one slot for frameLen, shift the frame right by one.
+  if (frameNext + 1 > ATT_SCRATCH_SLOTS) return ATT_OUTPUT_TOO_SMALL;
+  for (let i = frameNext; i > frameStart; --i) scratch[i] = scratch[i - 1];
+  scratch[frameStart] = BigInt(frameLen);
+
+  return 5 + outStateLen + frameLen;
+}
+
+function freezeSnapshot(snap) {
+  return Object.freeze({
+    ring: Object.freeze(snap.ring.map((a) => Object.freeze({ ...a }))),
+    history: Object.freeze(snap.history.map((ring) => Object.freeze(
+      ring.map((a) => Object.freeze({ ...a }))))),
+    lastPointerEpoch: snap.lastPointerEpoch,
+    transfer: snap.transfer
+      ? Object.freeze({
+          sourceId: snap.transfer.sourceId,
+          payloadKind: snap.transfer.payloadKind,
+          snapshot: freezeSnapshot(snap.transfer.snapshot),
+        })
+      : null,
+  });
+}
