@@ -1,19 +1,11 @@
 // Append-only double-entry ledger. Entries are frozen and content-addressed
-// (id = SHA-256 of the canonical body including prevHash), so tampering with
-// any byte invalidates every later entry. Views filter without mutating;
-// overlay appends an unposted draft for Input-mode preview.
+// (id = SHA-256 of the canonical body including prevHash). Views filter
+// without mutating; overlay appends an unposted draft for preview.
 //
-// validateLine() (S4-close): a stored line carries BOTH debit and credit
-// fields, one being 0. The rule is now: a side is "present" iff it is a
-// non-zero safe integer; exactly one side must be present. The other side
-// may be absent or 0. This keeps re-posting a stored entry byte-identical
-// while still rejecting {debit:5,credit:5}, {debit:0,credit:0}, negatives
-// and non-integers.
-//
-// LedgerView.byId() (S4-close): returns the entry with that id from the
-// view's own entries (overlay included), throws if absent. The receipt
-// builder and impact use it.
-
+// S6: MAX_ENTRY_LINES = 32 enforced in post(). Keeps receipts bounded so L7
+// (exact rows <= predicted rows) is provable without inspecting the ledger.
+// Rationale: premeasure uses MAX_ENTRY_LINES as the receipt row upper bound;
+// without the cap, a receipt could exceed its predicted rows.
 import {
   DEFAULT_CURRENCY, addMinor, assertMinor,
 } from './money.mjs';
@@ -22,6 +14,7 @@ import {
 } from './time.mjs';
 import { hashEntryBody, GENESIS_HASH } from './hash.mjs';
 import { validateAccounts, naturalBalance } from './accounts.mjs';
+import { MAX_ENTRY_LINES } from './schema.mjs';
 
 function validateLine(line, byCode) {
   if (!line || typeof line !== 'object') throw new Error('line must be an object');
@@ -29,9 +22,6 @@ function validateLine(line, byCode) {
   if (typeof account !== 'string' || !byCode[account]) {
     throw new Error(`unknown account: ${String(account)}`);
   }
-  // A side counts as present only when it is a non-zero safe integer.
-  // A stored line carries both fields, one of which is 0; without this rule
-  // a journal reload would fail with "exactly one of debit/credit".
   const hasD = debit !== undefined && debit !== null && debit !== 0;
   const hasC = credit !== undefined && credit !== null && credit !== 0;
   if (hasD && hasC) throw new Error(`line on ${account}: exactly one of debit/credit`);
@@ -48,6 +38,9 @@ function validateBody(body, byCode) {
   if (typeof body.memo !== 'string' || !body.memo) throw new Error('memo required');
   if (!Array.isArray(body.lines) || body.lines.length < 2) {
     throw new Error('at least 2 lines required');
+  }
+  if (body.lines.length > MAX_ENTRY_LINES) {
+    throw new Error(`entry has too many lines: ${body.lines.length} > ${MAX_ENTRY_LINES}`);
   }
   const lines = body.lines.map((l) => validateLine(l, byCode));
   let debits = 0;
@@ -162,8 +155,6 @@ export class Ledger {
     if (typeof memo !== 'string' || !memo) throw new Error('reversal memo required');
     validateDate(date, 'reversal date');
     if (date < original.date) throw new Error('reversal date cannot precede the original');
-    // Emit exactly the non-zero side; validateBody normalises the zero side
-    // back in for the frozen entry, matching a forward post.
     const mirrored = original.lines.map((l) =>
       l.debit > 0
         ? { account: l.account, credit: l.debit }
@@ -218,9 +209,6 @@ export class Ledger {
   view(opts = {}) { return new LedgerView(this, opts); }
 }
 
-// Read-only filter view. asOfSeq bounds by seq; excludeSeq drops one seq;
-// overlay appends an unposted draft with a synthetic seq beyond the current
-// head. Views never mutate the parent; each derived view is independent.
 export class LedgerView {
   #parent;
   #asOfSeq;
@@ -275,10 +263,6 @@ export class LedgerView {
     return e;
   }
 
-  // Impact and the receipt builder look up by content id; the view must
-  // expose the same byId surface that Ledger does. Searches the view's own
-  // entries so an overlay synthetic entry is also reachable by id if the
-  // caller passes one in.
   byId(id) {
     const e = this.entries().find((x) => x.id === id);
     if (!e) throw new Error(`no entry with id ${id} in view`);
