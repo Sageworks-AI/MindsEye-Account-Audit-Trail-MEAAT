@@ -1,0 +1,18 @@
+{
+  "id": "W10",
+  "name": "rejections",
+  "initialRing": [{ "id": "A", "kind": "DOC" }, { "id": "B", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "FOCUS", "id": "Z", "source": "command" }, "expectRing": ["A", "B"], "expectCode": -1 },
+    { "event": { "type": "FOCUS", "id": "A", "source": "pointer", "pointerEpoch": 0 }, "expectRing": ["A", "B"], "expectCode": 3 },
+    { "event": { "type": "FOCUS", "id": "B", "source": "pointer", "pointerEpoch": 5 }, "expectRing": ["B", "A"] },
+    { "event": { "type": "FOCUS", "id": "A", "source": "pointer", "pointerEpoch": 5 }, "expectRing": ["B", "A"], "expectCode": 2 }
+  ],
+  "cancelVariant": {
+    "steps": [
+      { "event": { "type": "CLOSE", "id": "B" }, "expectRing": ["A"] },
+      { "event": { "type": "TRANSFER_COPY", "sourceId": "A", "payloadKind": "rows" }, "expectRing": ["A"], "expectCode": -3 },
+      { "event": { "type": "TRANSFER_PASTE", "targetId": "A", "outcomeKind": "trail-edit" }, "expectRing": ["A"], "expectCode": -3 }
+    ]
+  }
+}
