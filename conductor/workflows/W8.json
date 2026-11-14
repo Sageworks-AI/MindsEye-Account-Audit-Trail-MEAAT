@@ -1,0 +1,8 @@
+{
+  "id": "W8",
+  "name": "opening a fourth pane",
+  "initialRing": [{ "id": "RC", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }, { "id": "BS", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "OPEN", "actor": { "id": "FM", "kind": "FORM" } }, "expectRing": ["FM", "RC", "CF", "BS"] }
+  ]
+}
