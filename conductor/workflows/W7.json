@@ -1,0 +1,10 @@
+{
+  "id": "W7",
+  "name": "period sync from cash flow to balance sheet",
+  "initialRing": [{ "id": "CF", "kind": "DOC" }, { "id": "BS", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "TRANSFER_COPY", "sourceId": "CF", "payloadKind": "period" }, "expectRing": ["CF", "BS"] },
+    { "event": { "type": "FOCUS", "id": "BS", "source": "command" }, "expectRing": ["BS", "CF"] },
+    { "event": { "type": "TRANSFER_PASTE", "targetId": "BS", "outcomeKind": "period-change" }, "expectRing": ["BS", "CF"] }
+  ]
+}
