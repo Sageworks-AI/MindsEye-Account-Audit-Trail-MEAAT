@@ -373,21 +373,6 @@ all checks pass, section shape, money-path integrity).
 
 MIT. See `LICENSE`. This project builds on ideas and a client skeleton
 from MindsEye (MIT, (c) 2025 Thabiwa).
-RUN:
 
 
-npm test
-npm run demo
-npm run report
-npm run report && shasum -a 256 out/report.html out/report.json > /tmp/report-a.sha 2>/dev/null || true
-npm run report && shasum -a 256 out/report.html out/report.json > /tmp/report-b.sha 2>/dev/null || true
-diff /tmp/report-a.sha /tmp/report-b.sha
-# pass: npm test reports "boundary check: OK" and every node:test suite
-#       green including test/renderer.test.mjs and test/report.test.mjs
-#       (byte-stable HTML and JSON, all checks pass, section shape,
-#       money-path integrity, no drift from test/fixtures/ledger.mjs).
-#       npm run demo prints one line per card (all "ok=yes").
-#       npm run report writes out/report.html and out/report.json and
-#       exits 0 with "all checks pass". Running it a second time and
-#       diffing the shasums yields no differences.
-git add -A && git commit -m "S11: demo ledger and report generator (out/report.html + out/report.json)"
+
