@@ -1,0 +1,13 @@
+{
+  "id": "W1",
+  "name": "reading and shifting focus",
+  "initialRing": [],
+  "steps": [
+    { "event": { "type": "OPEN", "actor": { "id": "BS", "kind": "DOC" } }, "expectRing": ["BS"] },
+    { "event": { "type": "OPEN", "actor": { "id": "CF", "kind": "DOC" } }, "expectRing": ["CF", "BS"] },
+    { "event": { "type": "OPEN", "actor": { "id": "RC", "kind": "DOC" } }, "expectRing": ["RC", "CF", "BS"] },
+    { "event": { "type": "FOCUS", "id": "BS", "source": "pointer", "pointerEpoch": 1 }, "expectRing": ["BS", "RC", "CF"] },
+    { "event": { "type": "FOCUS", "id": "CF", "source": "pointer", "pointerEpoch": 2 }, "expectRing": ["CF", "BS", "RC"] },
+    { "event": { "type": "FOCUS", "id": "BS", "source": "pointer", "pointerEpoch": 3 }, "expectRing": ["BS", "CF", "RC"] }
+  ]
+}
