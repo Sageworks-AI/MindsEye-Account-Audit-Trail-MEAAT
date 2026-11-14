@@ -1,0 +1,13 @@
+{
+  "id": "W6",
+  "name": "trail building from balance sheet then cash flow",
+  "initialRing": [{ "id": "BS", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }, { "id": "TR", "kind": "TRAIL" }],
+  "steps": [
+    { "event": { "type": "TRANSFER_COPY", "sourceId": "BS", "payloadKind": "rows" }, "expectRing": ["BS", "CF", "TR"] },
+    { "event": { "type": "FOCUS", "id": "TR", "source": "command" }, "expectRing": ["TR", "BS", "CF"] },
+    { "event": { "type": "TRANSFER_PASTE", "targetId": "TR", "outcomeKind": "trail-edit" }, "expectRing": ["TR", "BS", "CF"] },
+    { "event": { "type": "TRANSFER_COPY", "sourceId": "CF", "payloadKind": "rows" }, "expectRing": ["CF", "TR", "BS"] },
+    { "event": { "type": "FOCUS", "id": "TR", "source": "command" }, "expectRing": ["TR", "CF", "BS"] },
+    { "event": { "type": "TRANSFER_PASTE", "targetId": "TR", "outcomeKind": "trail-edit" }, "expectRing": ["TR", "CF", "BS"] }
+  ]
+}
