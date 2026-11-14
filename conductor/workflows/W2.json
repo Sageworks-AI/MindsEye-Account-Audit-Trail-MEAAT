@@ -1,0 +1,16 @@
+{
+  "id": "W2",
+  "name": "input by text",
+  "initialRing": [{ "id": "BS", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }, { "id": "RC", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "INPUT_BEGIN", "channel": "text" }, "expectRing": ["BAR", "BS", "CF", "RC"] },
+    { "event": { "type": "INPUT_END", "outcome": "commit" }, "expectRing": ["BS", "CF", "RC"] },
+    { "event": { "type": "FOCUS", "id": "RC", "source": "command" }, "expectRing": ["RC", "BS", "CF"] }
+  ],
+  "cancelVariant": {
+    "steps": [
+      { "event": { "type": "INPUT_BEGIN", "channel": "text" }, "expectRing": ["BAR", "BS", "CF", "RC"] },
+      { "event": { "type": "INPUT_END", "outcome": "cancel" }, "expectRing": ["BS", "CF", "RC"] }
+    ]
+  }
+}
