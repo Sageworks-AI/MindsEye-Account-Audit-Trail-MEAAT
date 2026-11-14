@@ -1,0 +1,14 @@
+{
+  "id": "W9",
+  "name": "closing the focused pane",
+  "initialRing": [{ "id": "BS", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }, { "id": "RC", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "CLOSE", "id": "BS" }, "expectRing": ["CF", "RC"] }
+  ],
+  "cancelVariant": {
+    "steps": [
+      { "event": { "type": "TRANSFER_COPY", "sourceId": "BS", "payloadKind": "rows" }, "expectRing": ["BS", "CF", "RC"] },
+      { "event": { "type": "CLOSE", "id": "BS" }, "expectRing": ["CF", "RC"] }
+    ]
+  }
+}
