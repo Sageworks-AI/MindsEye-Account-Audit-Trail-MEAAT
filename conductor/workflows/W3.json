@@ -1,0 +1,9 @@
+{
+  "id": "W3",
+  "name": "input by voice",
+  "initialRing": [{ "id": "BS", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }, { "id": "RC", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "INPUT_BEGIN", "channel": "voice" }, "expectRing": ["BAR", "BS", "CF", "RC"] },
+    { "event": { "type": "INPUT_END", "outcome": "cancel" }, "expectRing": ["BS", "CF", "RC"] }
+  ]
+}
