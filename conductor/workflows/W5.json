@@ -1,0 +1,10 @@
+{
+  "id": "W5",
+  "name": "entry clone into the form",
+  "initialRing": [{ "id": "RC", "kind": "DOC" }, { "id": "FM", "kind": "FORM" }, { "id": "BS", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "TRANSFER_COPY", "sourceId": "RC", "payloadKind": "entry" }, "expectRing": ["RC", "FM", "BS"] },
+    { "event": { "type": "FOCUS", "id": "FM", "source": "command" }, "expectRing": ["FM", "RC", "BS"] },
+    { "event": { "type": "TRANSFER_PASTE", "targetId": "FM", "outcomeKind": "draft-entry" }, "expectRing": ["FM", "RC", "BS"] }
+  ]
+}
