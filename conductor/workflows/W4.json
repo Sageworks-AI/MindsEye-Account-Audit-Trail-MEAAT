@@ -1,0 +1,17 @@
+{
+  "id": "W4",
+  "name": "impact of a receipt on the balance sheet",
+  "initialRing": [{ "id": "RC", "kind": "DOC" }, { "id": "BS", "kind": "DOC" }, { "id": "CF", "kind": "DOC" }],
+  "steps": [
+    { "event": { "type": "TRANSFER_COPY", "sourceId": "RC", "payloadKind": "entry" }, "expectRing": ["RC", "BS", "CF"] },
+    { "event": { "type": "FOCUS", "id": "BS", "source": "command" }, "expectRing": ["BS", "RC", "CF"] },
+    { "event": { "type": "TRANSFER_PASTE", "targetId": "BS", "outcomeKind": "impact" }, "expectRing": ["BS", "RC", "CF"] }
+  ],
+  "cancelVariant": {
+    "steps": [
+      { "event": { "type": "TRANSFER_COPY", "sourceId": "RC", "payloadKind": "entry" }, "expectRing": ["RC", "BS", "CF"] },
+      { "event": { "type": "FOCUS", "id": "BS", "source": "command" }, "expectRing": ["BS", "RC", "CF"] },
+      { "event": { "type": "BACK" }, "expectRing": ["RC", "BS", "CF"] }
+    ]
+  }
+}
