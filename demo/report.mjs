@@ -1,34 +1,35 @@
 // Writes out/report.html and out/report.json: the acceptance artifact.
 // Exits non-zero if any check fails or if two runs produce different bytes.
-// Also exports `buildReport()` so test/report.test.mjs can byte-compare two
-// in-process runs without spawning a child process.
+// Also exports `setupDemo` and `buildReport` so test/report.test.mjs can
+// build twice in-process and byte-compare.
 //
-// The report is assembled from `demo/report-*.mjs` section builders. Each
-// returns `{ html, json, allPassed?, checks? }`; this file composes them,
-// renders the outer HTML document (with the only inline CSS in the report),
-// writes the files and computes the exit code.
+// Every section builder returns { html, json, checks, allPassed }. The
+// orchestrator concatenates the checks and requires every section (and the
+// aggregate checks table) to pass. A failed attention law or fuzz check is
+// as fatal as a failed card check — this is why allChecks and allPassed
+// include every section, not just the ledger ones.
 //
-// Everything here is deterministic. There is no wall-clock, no randomness,
-// no filesystem scan whose order could vary. Two runs of `npm run report`
-// on the same inputs must produce byte-identical output; the test asserts
-// that by calling `buildReport` twice and comparing strings.
+// Setup is deterministic: journal events from the ledger, then synthetic
+// cache, space, impact, trail and attention events with timestamps derived
+// from a fixed epoch and 1-second spacing. No wall-clock, no randomness.
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildDemoLedger, DEMO_PERIOD } from './demo.ledger.mjs';
-import { CardStore } from '../store/cardStore.mjs';
 import { buildReadSection, buildImpactSection, buildTrailSection } from './report-read.mjs';
 import { buildSequencerSection, buildChecksSection } from './report-meta.mjs';
 import { buildSpaceSection } from './report-space.mjs';
-import { buildAttentionSection, buildLevelsSection, buildFuzzSection } from './report-attn.mjs';
+import {
+  buildAttentionSection, buildLevelsSection, buildFuzzSection,
+} from './report-attn.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const OUT_DIR = join(ROOT, 'out');
 
 // Fixed epoch so synthetic event timestamps are deterministic across runs.
-// Q2 2026 keeps the sequencer summary chronologically after the ledger's Q1
-// entries without implying anything about wall-clock time.
+// Q2 2026 keeps the sequencer summary chronologically after the ledger's
+// Q1 entries without implying anything about wall-clock time.
 const EVENT_BASE_MS = Date.parse('2026-04-01T00:00:00Z');
 
 export function setupDemo() {
@@ -38,53 +39,75 @@ export function setupDemo() {
     events.push({
       type,
       ts: new Date(EVENT_BASE_MS + events.length * 1000).toISOString(),
-      ...extra,
+      ...(extra || {}),
     });
   };
-  // journal lane
+  // journal lane: one event per posted entry (reversal carries a tag)
   for (const entry of ledger.entries()) {
     pushEvent('entry.posted', {
       ref: { seq: entry.seq },
       tags: entry.reverses !== undefined ? ['reversal'] : [],
     });
   }
-  const cache = new CardStore({ onEvent: (e) => pushEvent(e.type, e) });
-  // space lane: two drafts that reflect what the report actually does
+  // cache lane: five cards, each (miss, built, hit). Synthetic but honest
+  // about what the report actually builds.
+  const cardSpecs = [
+    ['balance_sheet',    { asOf: { date: '2026-12-31', seq: Number.MAX_SAFE_INTEGER } }],
+    ['income_statement', { from: DEMO_PERIOD.from, to: DEMO_PERIOD.to }],
+    ['cash_flow',        { from: DEMO_PERIOD.from, to: DEMO_PERIOD.to }],
+    ['receipt',          { entryId: 3 }],
+    ['receipt',          { entryId: 4 }],
+  ];
+  for (const [type, params] of cardSpecs) {
+    pushEvent('card.miss',  { ref: { cardKey: type } });
+    pushEvent('card.built', { ref: { cardKey: type } });
+    pushEvent('card.hit',   { ref: { cardKey: type } });
+  }
+  // space lane
   pushEvent('space.premeasured', { lane: 'space', tags: ['read-3-card'] });
   pushEvent('space.laid_out',    { lane: 'space' });
-  // check lane: impact computation
+  pushEvent('space.reconciled',  { lane: 'space' });
+  // check lane
   pushEvent('impact.computed',   { lane: 'check', ref: { seq: 4 } });
-  // trail lane: the trail we build
+  // trail lane
   pushEvent('trail.saved',       { lane: 'trail', ref: { trailId: 'inv1-chain' } });
-  return { ledger, events, cache };
+  // attention lane: a W1-like focus sequence
+  for (const ring of [['RC'], ['CF', 'RC'], ['BS', 'CF', 'RC'], ['RC', 'BS', 'CF']]) {
+    pushEvent('attention.shifted', { lane: 'attention', tags: [ring.join(',')] });
+  }
+  return { ledger, events };
 }
 
-export function buildReport({ ledger, events, cache }) {
+export function buildReport({ ledger, events }) {
   const view = ledger.view();
   const period = { ...DEMO_PERIOD };
   const asOf = { date: '2026-12-31', seq: Number.MAX_SAFE_INTEGER };
   const head = ledger.head();
 
-  const read = buildReadSection({ ledger, view, cache, events, period, asOf, head });
+  const read = buildReadSection({ ledger, view, period, asOf, head });
   const impact = buildImpactSection({ ledger, view, period, asOf, head });
   const trail = buildTrailSection({ ledger, view, head });
-  const sequencer = buildSequencerSection({ events });
   const space = buildSpaceSection();
   const attn = buildAttentionSection();
   const levels = buildLevelsSection();
   const fuzz = buildFuzzSection();
+  const sequencer = buildSequencerSection({ events });
 
   const allChecks = [
     ...read.checks,
     ...impact.checks,
     ...trail.checks,
     ...space.checks,
+    ...attn.checks,
+    ...levels.checks,
+    ...fuzz.checks,
   ];
   const checks = buildChecksSection({ items: allChecks });
 
   const allPassed =
-    read.allPassed && impact.allPassed && trail.allPassed && space.allPassed &&
-    checks.allPassed;
+    read.allPassed && impact.allPassed && trail.allPassed &&
+    space.allPassed && attn.allPassed && levels.allPassed &&
+    fuzz.allPassed && checks.allPassed;
 
   const json = {
     version: 1,
@@ -129,11 +152,6 @@ export function writeReport({ html, json }) {
   writeFileSync(join(OUT_DIR, 'report.json'), JSON.stringify(json, null, 2) + '\n', 'utf8');
 }
 
-// ---------------------------------------------------------------------------
-// HTML shell. The only inline CSS in the repo lives here; it is a plain
-// string so byte-stability is trivial.
-// ---------------------------------------------------------------------------
-
 const CSS = `
   :root {
     color-scheme: light dark;
@@ -150,6 +168,7 @@ const CSS = `
   main { max-width: 1400px; margin: 0 auto; }
   h1 { font-size: 24px; margin: 0 0 8px; }
   h2 { font-size: 18px; margin: 0 0 16px; }
+  h3 { font-size: 15px; margin: 16px 0 8px; }
   header { margin-bottom: 24px; }
   section { background: var(--paper); border: 1px solid var(--rule); border-radius: 8px;
             padding: 24px; margin-bottom: 24px; }
@@ -158,7 +177,7 @@ const CSS = `
   .fail { color: var(--fail); }
   .grid { display: grid; gap: 12px; }
   .grid-3 { grid-template-columns: 1fr; }
-  @media (min-width: 1100px) { .grid-3 { grid-template-columns: 2fr 1fr 1fr; } }
+  @media (min-width: 1100px) { .grid-3 { grid-template-columns: repeat(3, 1fr); } }
   .card { background: var(--bg); border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; }
   .card svg { display: block; width: 100%; height: auto; }
   table { border-collapse: collapse; width: 100%; font-size: 14px; }
@@ -206,15 +225,10 @@ ${sectionHtml}
 `;
 }
 
-// ---------------------------------------------------------------------------
-// CLI. `node demo/report.mjs` writes out/report.html and out/report.json and
-// exits 0 on pass, 1 on any failed check.
-// ---------------------------------------------------------------------------
-
 const isMain = process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url;
 if (isMain) {
-  const { ledger, events, cache } = setupDemo();
-  const result = buildReport({ ledger, events, cache });
+  const { ledger, events } = setupDemo();
+  const result = buildReport({ ledger, events });
   writeReport(result);
   const status = result.exitCode === 0 ? 'all checks pass' : 'SOME CHECKS FAIL';
   console.log(`report: wrote out/report.html and out/report.json (${status})`);
