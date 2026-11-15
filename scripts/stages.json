@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "_comment": "One entry per stage, in order. `test/stages.test.mjs` compares this list to the '## Status by stage' table in README.md; a mismatch fails the test. `state` values use the same normalised wording as the README ('done', 'sources done, wasm pending local build', 'stabilising', 'pending'); leading/trailing asterisks are stripped before comparison.",
+  "stages": [
+    { "id": "S0",  "title": "Scaffold, boundary checker, scaffold test",          "state": "done" },
+    { "id": "S1",  "title": "`core/` v2 + tests",                                  "state": "done" },
+    { "id": "S2",  "title": "`store/` + `sequencer/`",                             "state": "done" },
+    { "id": "S3",  "title": "`resolve/`",                                          "state": "done" },
+    { "id": "S4",  "title": "`space/` JS twin + reference data",                   "state": "done" },
+    { "id": "S5",  "title": "`space/` C++ + wasm + parity",                        "state": "sources done, wasm pending local build" },
+    { "id": "S6",  "title": "`bridge/`",                                           "state": "done" },
+    { "id": "S7",  "title": "`attention/` JS twin + level table",                  "state": "done" },
+    { "id": "S8",  "title": "`attention/` C++ + wasm + CSS emitter",               "state": "sources done, wasm pending local build" },
+    { "id": "S9",  "title": "`conductor/` (Python)",                               "state": "done" },
+    { "id": "S10", "title": "`view/` SVG renderers + snapshots",                   "state": "done" },
+    { "id": "S11", "title": "demo ledger + `npm run report`",                      "state": "done" },
+    { "id": "S12", "title": "`server/`",                                           "state": "done" },
+    { "id": "S13", "title": "`app/` (React + Vite)",                               "state": "done" },
+    { "id": "S14", "title": "Final integration, README final pass, DoD checklist", "state": "done" }
+  ]
+}
