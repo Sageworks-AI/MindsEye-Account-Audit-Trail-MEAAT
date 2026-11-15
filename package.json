@@ -24,9 +24,9 @@
     "verify:attention": "node scripts/verify-attention.mjs",
     "gen:attention-golden": "node scripts/gen-attention-golden.mjs",
     "emit:attention-css": "node scripts/emit-attention-css.mjs --force",
-    "conduct": "echo 'python -m conductor build (implemented in S9)'",
-    "conduct:verify": "echo 'python -m conductor verify (implemented in S9)'",
-    "test:conductor": "echo 'python conductor tests (implemented in S9; skipped without Python)'"
+    "conduct": "node scripts/conduct.mjs build",
+    "conduct:verify": "node scripts/conduct.mjs verify",
+    "test:conductor": "node scripts/conduct.mjs test"
   },
   "dependencies": {
     "react": "^18.3.1",
