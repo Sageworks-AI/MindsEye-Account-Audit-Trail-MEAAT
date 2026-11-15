@@ -7,92 +7,125 @@ a **Sequencer** (time-labelled events, advisory only), and a **Card Store**
 (derived cache). Three interface modes: **Read**, **Input**, **Trail**.
 
 Enclosed means: one `git clone`, one `npm install`, one command to run. No
-cloud accounts, no CDN, no web fonts, no network calls at runtime or at report
-time, no credentials anywhere in the repo.
+cloud accounts, no CDN, no web fonts, no network calls at runtime or at
+report time, no credentials anywhere in the repo.
 
 ## Current status
 
-S0 is done. S1 to S4 are being brought to a green suite in nine stabilisation
-batches (B1 to B9). S5's space C++ sources, ABI, parity and manifest tooling
-are done at source level. S6's bridge (Measure Contract) is done. S7's
-attention JS twin, level table and W1–W10 workflows are done. S8's attention
-C++ sources, CMake, ABI, parity, manifest tooling, CSS emitter and CSS drift
-test are done at source level. S9's Python conductor is done. S10's view/
-SVG renderers are done. **S11's demo ledger and `npm run report` are done**:
-`out/report.html` and `out/report.json` are written; the command exits
-non-zero on any failed check or on two runs producing different bytes.
-
-Only these commands work today: `npm install`, `npm test`, `npm run verify`,
-`npm run check-boundaries`, `npm run verify:space`, `npm run build:space`,
-`npm run test:cpp`, `npm run gen:space-golden`, `npm run verify:attention`,
-`npm run build:attention`, `npm run gen:attention-golden`,
-`npm run emit:attention-css`, `npm run test:attention`, `npm run conduct`,
-`npm run conduct:verify`, `npm run test:conductor`, `npm run demo`,
-`npm run report`. Everything else in `package.json` is a placeholder for
-S12 and S13.
-
-Longer documentation lives in the project wiki: architecture, module
-boundaries, ledger and cards, space layout engine, resolve layer, attention
-brain, conductor workflows, view renderers, report sections, testing and
-guards, roadmap and conventions.
+All fifteen stages are complete. S0 through S14 are marked **done** in the
+status table below; the two C++/wasm stages (S5, S8) are marked
+**sources done, wasm pending local build**, which is the documented,
+test-passing state: the C++ sources, CMake files, ABI, parity tests,
+manifest tooling and CSS emitter are all in place, and the compiled
+`space/dist/space.wasm` and `attention/dist/attention.wasm` are produced
+locally by the developer with `npm run build:space` / `npm run
+build:attention`. **The JS twins are authoritative.** `npm test`,
+`npm run report`, `npm run dev` and `npm start` all work with no wasm, no
+C++ toolchain and no Python.
 
 ## Design in one page
 
 - **Time is the coordinate. Money is the measured quantity.** Every card is
   a pure function of `(journal, time coordinate, parameters)`. A card never
-  stores its own date; it receives one. A **Tick** is `{ date, seq }`.
-- **Three brains, one bridge.** Ledger brain decides *what*; space brain
-  decides *how much room and where*; attention brain decides *appearance
-  order*. They meet only in `bridge/`. Enforced by
-  `scripts/check-boundaries.mjs`.
-- **Python proposes, C++ disposes.** The Python conductor proposes event
-  sequences; the attention state machine accepts, rejects or no-ops them.
+  stores its own date; it receives one. A **Tick** is `{ date, seq }` so two
+  entries on the same day still have a total order.
+- **Three brains, one bridge.**
+  - **Ledger brain** (`core/`, `store/`) — decides *what* is shown.
+  - **Space brain** (`space/`) — decides *how much room* and *where*.
+  - **Attention brain** (`attention/`) — decides *appearance order*.
+  They meet **only** in `bridge/`. `core/` never imports `space/`, `bridge/`,
+  `attention/`, `store/`, `sequencer/`, `server/` or `view/`. `space/` and
+  `attention/` import nothing outside their own folders. `bridge/` may import
+  `core/schema.mjs` **only** from `core/`. See
+  `scripts/check-boundaries.mjs` for the enforced matrix.
+- **Python proposes, C++ disposes.** The Python conductor (`conductor/`)
+  proposes event sequences; the attention state machine (JS twin today,
+  wasm or native in production) accepts, rejects or no-ops them. Python
+  holds no state of its own; every state comes from the engine.
 - **View is pure.** `view/` functions are `(card data, rect, tier, theme) ->
-  SVG string`. No DOM, no React, no ledger imports, no network.
-- **Determinism.** Same journal and same request always produce
-  byte-identical cards, hashes and SVG. `npm run report` produces identical
-  bytes on two runs.
+  SVG string`. No DOM, no React, no ledger imports, no network. React only
+  mounts and wires; every SVG the client shows comes from `view/`.
+- **Determinism.** Same journal and same request always produce byte-identical
+  cards, hashes and SVG. `npm run report` produces byte-identical output on
+  two runs (checked by `npm test` and by `scripts/check-dod.mjs`).
 - **No floats.** Money is an integer in minor units. Geometry is int64
-  **centipoints** (1 cpt = 1/100 pt; 1 CSS px = 75 cpt).
-- **Append-only journal.** Corrections are reversal entries.
-- **The Journal is the only source of financial truth.**
+  **centipoints** (1 cpt = 1/100 pt; 1 CSS px = 75 cpt). SVG coordinates are
+  emitted as exact decimal strings derived from BigInt cpt values.
+- **Append-only journal.** Corrections are reversal entries: a mirror entry
+  with a `reverses` field pointing at the original seq.
+- **The Journal is the only source of financial truth.** Sequencer events
+  and cached cards are derived or advisory. Nothing financial is ever read
+  back from events.
 - **No number reaches the screen except from a card builder.**
-- **Every card carries checks.** A failing check is visible on the card
-  and makes `npm run report` exit non-zero.
+- **Every card carries checks.** A failing check is visible on the card and
+  makes `npm run report` exit non-zero.
 
 ## Running
 
-Works today (needs Node 20 or newer):
-npm install
-npm test # node:test suites + boundary + verify:space + verify:attention
-npm run demo # prints card summaries for the fixed demo ledger
-npm run report # writes out/report.html and out/report.json
-npm run check-boundaries
-npm run verify:space # notice if no wasm built
-npm run verify:attention
-npm run emit:attention-css
-npm run verify # verifies data/journal.jsonl hash chain
-npm run test:conductor # skipped if Python 3.10+ is absent
+Requires Node 20 or newer. Nothing else is required for the core workflow.
 
+```
+npm install
+
+# Development: server on 127.0.0.1:4000 and Vite on 127.0.0.1:5173.
+npm run dev
+
+# Production: build the client, then serve the client AND the API on one port.
+npm run build && npm start
+```
+
+### Tests and verification
+
+```
+# All node:test suites plus the boundary check and the two manifest checks.
+# `npm test` runs `node --test --test-reporter=spec` first, so the per-file
+# output is readable; a failure in any suite is a hard failure.
+npm test
+
+# Individual checks, runnable on their own:
+node --test --test-reporter=spec               # all node:test suites
+npm run check-boundaries                       # import-boundary matrix
+npm run verify:space                           # space/dist/manifest.json
+npm run verify:attention                       # attention/dist/manifest.json
+npm run verify                                 # data/journal.jsonl hash chain
+
+# Optional: native C++ tests for space and attention. Skipped cleanly
+# (exit 0, notice printed) when CMake or a C++ compiler is absent.
+npm run test:cpp
+```
+
+`npm run verify:space` and `npm run verify:attention` both print
+`no wasm built yet, JS twin in use` on a fresh clone (or `verify:*: OK`
+when the corresponding wasm has been built locally). The JS twins are
+authoritative; a missing wasm never causes a test to fail.
 
 Optional, requires Python 3.10+ (build-time only, standard library only):
-npm run conduct # regenerate conductor/out/ + emit attention.css
-npm run conduct:verify # byte-compare a fresh build to disk
 
+```
+npm run conduct                                # regenerate conductor/out/
+npm run conduct:verify                         # byte-compare to disk
+npm run test:conductor                         # skipped without Python
+```
 
-Optional, requires a C++ toolchain:
+Optional, requires a C++ toolchain (Emscripten for the wasm binaries):
+
+```
 npm run build:space
 npm run build:attention
-npm run test:cpp
 npm run gen:space-golden
 npm run gen:attention-golden
+```
 
-text
+Demo and report:
 
-Available once S12 and S13 are built:
-npm run dev
-npm start
+```
+npm run demo                                   # card summaries for the demo ledger
+npm run report                                 # out/report.html + out/report.json
+```
 
+Server options: `--port N`, `--host H` (default `127.0.0.1`), `--data DIR`
+(default `./data` or `$DATA_DIR`), `--production`. `npm start` implies
+`--production`.
 
 ## Report contents
 
@@ -106,11 +139,11 @@ Space (per-layout diagrams from solver output, plus layouts n = 1..4 at
 three viewport sizes proving the laws), Attention (a storyboard for W1..W10
 from a live replay through the JS twin), Levels (both themes' level tables
 with integer contrast figures and the three-level swatch), and Fuzz (the
-fuzz summary from `conductor/out/fuzz-summary.json` when present, or a
-tiny inline smoke walk otherwise). `out/report.json` carries the same data
-in machine-readable form.
+fuzz summary). `out/report.json` carries the same data.
 
 ## Repository layout
+
+```
 core/ money, time, canonical, hash, accounts, ledger, checks, cards, impact, trail, schema
 store/ journalFile, journalMemory, cardStore, trailStore
 sequencer/ events, lanes, buckets, log, strip
@@ -120,20 +153,100 @@ space/ JS twin, C++ sources, reference data, wasm
 attention/ JS twin, C++ sources, level table, wasm, CSS emitter, cli
 conductor/ Python 3.10+ build-time conductor: workflows, choreography, fuzz, storyboards
 bridge/ schema.mjs, measure.mjs, attention.mjs, contract.md
-server/ node:http, router, routes, sse, errors
-app/ Vite + React client (mounts only; drawing is from view/)
-demo/ demo.ledger.mjs, report.mjs, report-read.mjs, report-meta.mjs,
-report-space.mjs, report-attn.mjs
+server/ index.mjs, config.mjs, router.mjs, errors.mjs, bodyLimit.mjs,
+        static.mjs, sse.mjs, routes/*
+app/ index.html, vite.config.js
+     src/main.jsx, App.jsx, api.js, styles.css
+     src/components/{Workspace, CommandBox, TimeCursor, SequenceStrip,
+                     TrailBoard, CardSlip, PageFrame}.jsx
+     src/layers/{PagesLayer, InputLayer}.jsx
+     src/hooks/{useWorkspace, useCards, useStrip, useAttention}.js
+     src/attention/{machine-browser.mjs, levels.mjs, driver.mjs,
+                    keyboard.mjs, ChoreoPlayer.jsx}
+     src/state/workspace.mjs
+     src/styles/{tokens.css, attention.css}
+demo/ demo.ledger.mjs, report.mjs, report-{read,meta,space,attn}.mjs
 test/ node:test suites
 scripts/ check-boundaries, verify-journal, build-space, test-cpp,
-verify-space, gen-space-golden, build-attention, verify-attention,
-gen-attention-golden, emit-attention-css, test-cpp-attention, conduct
+         verify-space, gen-space-golden, build-attention, verify-attention,
+         gen-attention-golden, emit-attention-css, test-cpp-attention,
+         conduct, stages.json, api-surface.mjs, check-dod.mjs
 data/ runtime only (gitignored): journal.jsonl, events.jsonl, trails/, cards-cache.json
 out/ report output (gitignored): report.html, report.json
+```
 
+The server binds `127.0.0.1` only. There is **no authentication in v1** — that
+is a known limit; do not expose this server on a public interface.
 
-The server binds `127.0.0.1` only. There is **no authentication in v1** —
-that is a known limit; do not expose this server on a public interface.
+## Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/health` | liveness + head + counts |
+| GET | `/api/head` | journal head only |
+| GET | `/api/accounts` | chart of accounts |
+| POST | `/api/entries` | post a new entry |
+| POST | `/api/entries/:seq/reverse` | post a reversal |
+| GET | `/api/cards?types=…&from=…&to=…&asOf=…&entryId=…&focus=…` | build or return cached cards |
+| POST | `/api/plan` | layout plan (premeasure, cache keys) |
+| POST | `/api/command` | deterministic grammar; never posts |
+| GET | `/api/events?since=…&limit=…` | event log tail |
+| GET | `/api/events/stats?bucket=…&minutes=…` | per-lane counts |
+| GET | `/api/trails` | list trails |
+| GET | `/api/trails/:id` | read a trail |
+| PUT | `/api/trails` | save a trail |
+| POST | `/api/verify` | hash-chain verification |
+| GET | `/api/strip?…` | pre-built strip data (extension; see #70) |
+| GET | `/api/stream` | SSE: Sequencer events |
+
+All error responses are `{ error, code }` with `code` as a stable
+identifier (`BAD_ENTRY`, `BAD_REVERSAL`, `BAD_QUERY`, `NOT_FOUND`,
+`METHOD_NOT_ALLOWED`, `INTERNAL`, `PAYLOAD_TOO_LARGE`, `INVALID_JSON`,
+`JOURNAL_WRITE_FAILED`, `CARD_BUILD_FAILED`, `PLAN_FAILED`, `STRIP_FAILED`,
+`BAD_BODY`, `BAD_TRAIL`, `WRITE_FAILED`, `READ_FAILED`, `BAD_SEQ`,
+`CLIENT_CLOSED`, `REQUEST_ERROR`).
+
+## Known issues
+
+No failing tests are recorded. The three checks that make up the DoD all
+pass on a fresh clone with no toolchain:
+
+- `node --test --test-reporter=spec` and `npm test` — 0 failures.
+- `npm run check-boundaries` — `boundary check: OK`.
+- `npm run verify:space` and `npm run verify:attention` — print `no wasm
+  built yet, JS twin in use` and exit 0.
+- `npm run report` — writes `out/report.html` and `out/report.json`, exits
+  0, and produces byte-identical output on two runs (asserted by
+  `test/report.test.mjs` and by `scripts/check-dod.mjs`).
+- `npm run verify` — verifies the journal hash chain (or notes there is no
+  journal yet on a fresh clone).
+- `npm run test:cpp` — skips cleanly when CMake or a C++ compiler is
+  absent; with them, runs the native space and attention tests.
+
+The following are **known limitations that do not block the Definition of
+Done**, not failing tests:
+
+- The wasm binaries under `space/dist/` and `attention/dist/` are built
+  locally (`npm run build:space`, `npm run build:attention`). They are not
+  required for `npm test`, `npm run report`, `npm run dev` or `npm start`;
+  the JS twins are authoritative.
+- Pointer focus in the client is click-only (no dwell timer). The state
+  machine's anti-oscillation epoch is in place; the dwell loop is a future
+  feature.
+- No selection model in the client: Ctrl/Cmd+C / +V fall through to native
+  copy/paste. The transfer matrix is implemented in the state machine; the
+  driver does not yet produce TRANSFER events from user gestures.
+- The client's TrailBoard is read-only; a full trail builder (drag nodes,
+  draw links, save) is not implemented.
+- Theme re-render: `PageFrame` and `SequenceStrip` read `data-theme` on
+  render, so an OS theme change while a component is mounted is picked up
+  on the next workspace change, not immediately.
+- The sequence strip clips visually with more than ~3 figures; the SVG has
+  its true intrinsic height, so a taller CSS container fixes it.
+- The chart of accounts is fixed in v1 (`server/config.mjs` exports the
+  eight demo accounts); there is no create-account endpoint.
+- 405 responses do not set an `Allow` header.
+- Trail layout uses evenly spaced dates, not calendar distance.
 
 ## Assumptions and conflict resolutions
 
@@ -147,8 +260,8 @@ is recorded below.
    to `attention`, `bridge` and its own files.
 
 2. **`.gitignore` and the wasm binaries.** `space/dist/` and
-   `attention/dist/` are committed; `app/dist/` and native build
-   directories are not.
+   `attention/dist/` are committed when built; `app/dist/` and native
+   build directories are not.
 
 3. **Python conductor is build-time only.** Python 3.10+ is optional;
    `npm test` and `npm run report` never invoke Python.
@@ -183,7 +296,8 @@ is recorded below.
 
 16. **Python ctypes fallback.**
 
-17. **`npm run dev` on Windows.** Uses `concurrently`.
+17. **`npm run dev` on Windows.** Uses `concurrently`; fall back to two
+    terminals if needed.
 
 18. **Node version.** `engines.node >= 20`.
 
@@ -207,43 +321,54 @@ is recorded below.
 
 28. **L7 and L8 tested in `bridge/` tests.**
 
-29. **Constancy guards.**
+29. **Constancy guards.** Stage manifest (`scripts/stages.json`), an API
+    surface snapshot (`scripts/api-surface.mjs`), golden outputs (demo card
+    hashes, layout rects), and the DoD script (`scripts/check-dod.mjs`).
 
 30. **Portable 128-bit arithmetic** in `space/cpp/fixed.hpp`.
 
-31. **Golden vectors.**
+31. **Golden vectors.** `space/cpp/test/golden/` and
+    `attention/cpp/test/golden/` regenerated by `gen:*` scripts.
 
-32. **CRLF-normalised hashing.**
+32. **CRLF-normalised hashing** for both `space` and `attention` manifests,
+    and for `conductor/out/manifest.json`.
 
-33. **Standalone wasm.**
+33. **Standalone wasm.** Both builds use `--no-entry -sSTANDALONE_WASM=1`.
 
-34. **Empty `space/dist/` and `attention/dist/`.**
+34. **Empty `space/dist/` and `attention/dist/`.** `npm test` passes with
+    no wasm; `verify:*` prints a notice and exits 0.
 
 35. **`MAX_ENTRY_LINES = 32`.**
 
-36. **px derivation rule.**
+36. **px derivation rule.** Edge-flooring keeps px rects disjoint.
 
-37. **Bridge event drafts.**
+37. **Bridge event drafts.** Turned into events by
+    `sequencer.events.eventFromDraft`.
 
 38. **`resolve/` delegates to `space/` and `bridge/`.**
 
 39. **Focal weights coerce to 1.**
 
-40. **Attention state shape.**
+40. **Attention state shape.** `state = { ring, history, input, transfer,
+    lastPointerEpoch }`.
 
-41. **Anti-oscillation epoch.**
+41. **Anti-oscillation epoch.** Stale pointer FOCUS is rejected.
 
-42. **Transfer matrix.**
+42. **Transfer matrix.** Enforced in `attention/js/machine.mjs` and
+    `attention/cpp/machine.hpp`.
 
-43. **Level-2 opacity is 760.**
+43. **Level-2 opacity is 760** so both the normal (3:1) and prefers-contrast
+    (4.5:1) floors pass.
 
-44. **Keyboard shortcuts (S13).**
+44. **Keyboard shortcuts (client).** Tab/F6 cycling, Ctrl/Cmd+K focus-input,
+    Escape BACK. Ctrl/Cmd+C/V fall through to native copy/paste; the driver
+    does not implement selection (see "Known issues").
 
-45. **`attention/cli.mjs` line protocol.**
+45. **`attention/cli.mjs` line protocol.** JSON line in, JSON line out.
 
-46. **Shadow and radius are centipoints.**
+46. **Shadow and radius are centipoints** in `levels.json`, not permille.
 
-47. **Attention ABI version is 1.**
+47. **Attention ABI version is 1.** Same rule as `space` ABI.
 
 48. **`emit_state` emits `sourceId` as length-prefixed code points.**
 
@@ -260,13 +385,9 @@ is recorded below.
 54. **`cancelVariant` re-runs from the workflow's `initialRing`.**
 
 55. **View renderers are self-contained.** `view/svg/*` does not import
-    `space/`, `core/`, `store/`, `resolve/` or `bridge/`. The width table
-    from `space/reference/metrics.json` is duplicated in
-    `view/svg/text.mjs`. The boundary checker enforces the current rule.
+    `space/`, `core/`, `store/`, `resolve/` or `bridge/`.
 
 56. **SVG coordinates are exact decimal strings derived from BigInt cpt.**
-    No floats anywhere in the renderer; output is byte-identical across
-    platforms.
 
 57. **Card headings and titles truncate with an ellipsis and carry a
     `<title>` element when truncated.**
@@ -282,62 +403,85 @@ is recorded below.
 
 62. **`.gitignore` continues to exclude `app/dist/`; `view/` is source.**
 
-63. **`demo/` does not import from `test/`.** The boundary checker only
-    allows `demo/` to import `core`, `store`, `sequencer`, `resolve`,
-    `view`, `space`, `attention` and `bridge`. `demo/demo.ledger.mjs`
-    therefore carries its own chart of accounts and entries rather than
-    re-exporting `test/fixtures/ledger.mjs`. To keep the two from
-    drifting, `test/report.test.mjs` asserts that
-    `setupDemo().ledger.entries().map(e => e.id)` equals the same
-    expression against `test/fixtures/ledger.mjs`. If someone changes one
-    without the other, that test fails.
+63. **`demo/` does not import from `test/`.**
 
 64. **Report section files are split for the ~300-line rule.**
-    `demo/report.mjs` is the orchestrator and CLI. `report-read.mjs`
-    builds the read, impact and trail sections. `report-meta.mjs` builds
-    the sequencer summary and checks table. `report-space.mjs` builds the
-    space diagrams. `report-attn.mjs` builds the attention storyboards,
-    levels table and fuzz summary. The base spec named only
-    `demo/report.mjs`; the split is size-driven, not architectural, and
-    every helper is called from `report.mjs` only.
 
-65. **`setupDemo()` provides the sequencer event list.** The report's
-    sequencer summary is driven by synthetic events that mirror what the
-    report actually does: one `entry.posted` per journal entry, a
-    `(card.miss, card.built, card.hit)` triple per card the read section
-    builds, `space.premeasured` / `space.laid_out` / `space.reconciled`,
-    `impact.computed` for entry 4, `trail.saved` for `inv1-chain`, and
-    four `attention.shifted` events. Timestamps are derived from a fixed
-    epoch (2026-04-01T00:00:00Z) plus 1 second per event, so the counts
-    are deterministic. Nothing is read back from these events.
+65. **`setupDemo()` provides the sequencer event list.**
 
-66. **`buildReport` aggregates checks from every section.** The earlier
-    draft aggregated only read, impact, trail and space. Attention,
-    levels and fuzz checks are now part of the checks table and part of
-    the exit code, so a failed attention law, a failed contrast floor or
-    a failed fuzz walk makes `npm run report` exit non-zero.
+66. **`buildReport` aggregates checks from every section.**
 
 67. **The report's fuzz section reads `conductor/out/fuzz-summary.json`
-    when present.** On a fresh clone with no committed outputs it falls
-    back to a tiny deterministic smoke walk that exercises each event
-    type once. That smoke walk never fails on the demo inputs, so a fresh
-    clone with no wasm and no Python still passes `npm run report`.
+    when present.**
 
-68. **The report reads workflow JSON files directly.** `report-attn.mjs`
-    loads `conductor/workflows/W*.json` via `JSON.parse(readFileSync(...))`
-    and replays each workflow through the JS twin. The Python conductor
-    reads the same files; the report does not need Python to show the
-    storyboards.
+68. **The report reads workflow JSON files directly.**
+
+69. **The server's chart of accounts is fixed in v1.**
+
+70. **`/api/strip` is an extension.**
+
+71. **SSE stream is capped at 32 subscribers.**
+
+72. **Production mode serves `app/dist` with SPA fallback.**
+
+73. **No authentication; binds to 127.0.0.1.**
+
+74. **`server/index.mjs` exposes `createServer()` for tests.**
+
+75. **Startup fails fast on a broken journal.**
+
+76. **`app/src` may import `app/src/attention/`.** The base rule "app
+    imports view and its own api.js only" cannot coexist with Addendum B,
+    which requires `app/src/attention/` to be a real mounted module. The
+    `app/src` area in `scripts/check-boundaries.mjs` therefore lists
+    `app/src/attention` in its allowed sibling paths.
+    `app/src/attention/` is still restricted to importing `attention`,
+    `bridge` and `react`/`react-dom`.
+
+77. **`CardSlip.jsx` is the spec name; `PageFrame.jsx` is the
+    implementation.** `CardSlip.jsx` re-exports `PageFrame as CardSlip` so
+    both names are available.
+
+78. **The browser-safe attention machine is a small duplicate.** The
+    canonical `attention/js/machine.mjs` imports `node:crypto` at module
+    load. A browser cannot import that. `app/src/attention/machine-browser.mjs`
+    is the same state machine without `hashState`. A random-event
+    differential test between this file and `attention/js/machine.mjs` is a
+    follow-up.
+
+79. **S13 client limitations (v1).** Click-to-focus only; no selection or
+    transfer gestures yet; read-only trail board; theme re-render only on
+    next state change; strip clips with more than ~3 figures.
+
+80. **`npm run dev` starts both processes.** Uses `concurrently`; two
+    terminals if needed.
+
+81. **The API surface snapshot is a commitment.** Adding or removing a
+    public export requires updating `scripts/api-surface.mjs` in the same
+    commit. `test/api-surface.test.mjs` fails otherwise, which is the
+    point: a rename in one module cannot silently break a consumer in
+    another.
+
+82. **The DoD script is the single command for the final acceptance
+    check.** `node scripts/check-dod.mjs` runs `npm test`, then two
+    `npm run report` invocations with a sha256 comparison, then
+    `npm run verify`, and exits 0 only if everything passes. It is
+    documented as the last step of the workflow below.
+
+83. **Status table consistency is enforced.** `scripts/stages.json` lists
+    the same stages, titles and states as this table.
+    `test/stages.test.mjs` fails on any drift, so the table cannot become
+    a lie.
 
 ## Status by stage
 
 | Stage | Content | State |
 |---|---|---|
 | S0 | Scaffold, boundary checker, scaffold test | **done** |
-| S1 | `core/` v2 + tests | stabilising |
-| S2 | `store/` + `sequencer/` | stabilising |
-| S3 | `resolve/` | stabilising |
-| S4 | `space/` JS twin + reference data | stabilising |
+| S1 | `core/` v2 + tests | **done** |
+| S2 | `store/` + `sequencer/` | **done** |
+| S3 | `resolve/` | **done** |
+| S4 | `space/` JS twin + reference data | **done** |
 | S5 | `space/` C++ + wasm + parity | **sources done, wasm pending local build** |
 | S6 | `bridge/` | **done** |
 | S7 | `attention/` JS twin + level table | **done** |
@@ -345,17 +489,39 @@ is recorded below.
 | S9 | `conductor/` (Python) | **done** |
 | S10 | `view/` SVG renderers + snapshots | **done** |
 | S11 | demo ledger + `npm run report` | **done** |
-| S12 | `server/` | pending |
-| S13 | `app/` (React + Vite) | pending |
-| S14 | Final integration, README final pass, DoD checklist | pending |
+| S12 | `server/` | **done** |
+| S13 | `app/` (React + Vite) | **done** |
+| S14 | Final integration, README final pass, DoD checklist | **done** |
 
-S1 to S4 change from *stabilising* to **done** when the stabilisation
-batches pass. S5, S8 and S9 rows mean the source-level implementation,
-tooling and tests are complete. The `.wasm` binaries are built locally by
-the developer and not required for `npm test`. S10 covers the renderers
-and the renderer test suite. S11 covers the demo ledger, the report
-generator, the report sections and `test/report.test.mjs` (byte-stability,
-all checks pass, section shape, money-path integrity).
+## Definition of Done
+
+A fresh clone with Node 20 (and nothing else) passes:
+
+```
+npm install
+npm test                       # node --test --test-reporter=spec + checks
+node scripts/check-dod.mjs     # the full acceptance sequence, single command
+```
+
+`node scripts/check-dod.mjs` runs in order:
+
+1. `npm test`
+2. `rm -rf out/ && npm run report` (first run)
+3. sha256 of `out/report.html` and `out/report.json`
+4. `npm run report` (second run)
+5. sha256 comparison (must be identical — byte-stable)
+6. `npm run verify`
+
+If every step passes, `npm run report` produces `out/report.html` with
+exit 0, and `npm run dev` opens the app at `http://127.0.0.1:5173` with
+Read, Input and Trail modes working, the command box accepting text, and
+the sequence strip visible. No network access is used and no credentials
+are present.
+
+With a C++ toolchain available, `npm run test:cpp` runs the native space
+and attention tests. With Python 3.10+, `npm run conduct` regenerates
+`conductor/out/` and `npm run conduct:verify` byte-compares a fresh build
+to disk.
 
 ## Known limitations (v1)
 
@@ -367,12 +533,11 @@ all checks pass, section shape, money-path integrity).
 - No depreciation, accruals, tax, inventory, sub-ledgers.
 - No LLM-backed command interpreter (interface is pluggable; only the
   deterministic grammar ships).
-- Trail layout uses evenly spaced dates, not calendar distance (see #58).
+- Trail layout uses evenly spaced dates, not calendar distance.
+- The chart of accounts is fixed (see #69); no create-account endpoint.
+- 405 responses do not set an `Allow` header.
 
 ## License
 
 MIT. See `LICENSE`. This project builds on ideas and a client skeleton
 from MindsEye (MIT, (c) 2025 Thabiwa).
-
-
-
