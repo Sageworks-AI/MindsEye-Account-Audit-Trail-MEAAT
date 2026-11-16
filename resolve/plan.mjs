@@ -64,7 +64,8 @@ export function plan(request, viewport, opts = {}) {
       rect: pxFromCpt(p.frameCpt),
       tier: p.tier,
       shapeClass: p.shapeClass,
-      scale: p.scale,
+      // JSON cannot carry BigInt, so the exact rational goes out as numbers.
+      scale: p.scale ? { num: Number(p.scale.num), den: Number(p.scale.den) } : p.scale,
       predictedRows: p.predictedRows,
       pagination: p.pagination,
     });
