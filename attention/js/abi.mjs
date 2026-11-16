@@ -26,6 +26,11 @@ export const ATT_RING_FULL = -4;
 export const ATT_LAW_VIOLATION = -5;
 export const ATT_OVERFLOW = -6;
 export const ATT_OUTPUT_TOO_SMALL = -7;
+// The levels ABI (att_levels_table, att_validate, att_step framing) reports
+// E_BAD_VERSION = -1 and E_BAD_ARGUMENT = -2 in attention/cpp/api.cpp; the
+// numeric values are shared with ATT_BAD_ACTOR and ATT_BAD_EVENT above.
+export const ATT_BAD_VERSION = -1;
+export const ATT_BAD_ARGUMENT = -2;
 
 const MAX_ACTORS = 8;
 const HISTORY_DEPTH = 16;
