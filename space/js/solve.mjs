@@ -1,85 +1,77 @@
-// Finite set of split templates for n = 1..4 panes. All splits use Hamilton
-// apportionment so parts sum exactly to the span (Law L2).
+// The solver: viewport + pane requests + archetypes -> per-pane { rect,
+// shapeClass, tier, scale, pagination }. All geometry in cpt (BigInt).
+// Enforces L1, L3, L4, L6, L11 inside the solve; L2 is discharged by
+// apportion; L5, L7, L8, L9, L10, L12 are verified by tests. Any law that
+// would be violated returns { error, law } rather than a bad layout.
 //
-// S6: templates now take an optional `weights` array in **template order**
-// (focal first when the caller has reordered; original order otherwise).
-// The JS twin's solve.mjs and resolve/layout.mjs both reorder before calling
-// so the focal pane lands in the large slot. n=1 and n=4 ignore weights
-// (single pane or 2x2 grid).
+// Behaviour ports solve_panes in space/cpp/solve.hpp:
+//   MIN_BODY_CPT = 675; DEFAULT_GUTTER_CPT = 600;
+//   TIER_THRESHOLDS = { summaryBelow: 24000x18000, standardBelow: 48000x36000 };
+//   MAX_PAGES_PER_PANE = 128;
+//   Hamilton apportionment (chooseTemplate delegates to apportion);
+//   3-pane rule = 600/1000 of the long axis to the focal pane, 400/1000
+//   split between the two smalls by their weights;
+//   the BAR check (isBar===true) excludes a pane from geometry (L12);
+//   focal pane is reordered first, its rect is rects[0], and the centre of
+//   the viewport must land inside it (L6).
 //
-// 3-pane rule (README #22): the focal pane takes 600/1000 of the long axis,
-// the two smalls share the remaining 400/1000 in proportion to their own
-// weights. This matches resolve/layout.mjs's S4-close behaviour exactly; the
-// two modules must stay in lockstep (they do — this template is the only
-// implementation now).
-import { apportion } from './apportion.mjs';
+// Caller interface (abi.mjs, bridge/attention.mjs, bridge/measure.mjs):
+//   solve(viewport, panes, { archetypes, gutter?, focalIndex?, minBodyCpt? })
+//   viewport  = { w: BigInt, h: BigInt }
+//   panes     = [{ archetypeId, isBar?, rowsUpper?, weight?, claim? }]
+//   returns   = { panes: [...], focalIndex } or { error, law? }
+// Each returned pane carries { originalIndex, rect: {x,y,w,h:BigInt},
+//   shapeClass: 'FULL'|'HALF'|'QUARTER'|'STRIP', tier: 'summary'|'standard'|'full',
+//   scale: {num:BigInt, den:BigInt}, effectiveBodyCpt: BigInt,
+//   pagination: [{from:number, to:number}], rowsUpperBound: number }.
+import { chooseTemplate } from './templates.mjs';
+import { paginate } from './paginate.mjs';
+import { makeRational } from './rational.mjs';
 
-export function chooseTemplate(n) {
-  switch (n) {
-    case 1: return (w, h) => [{ x: 0n, y: 0n, w, h }];
-    case 2: return (w, h, g, weights) => w >= h
-      ? splitHorizontal(w, h, g, weights)
-      : splitVertical(w, h, g, weights);
-    case 3: return (w, h, g, weights) => threePane(w, h, g, weights);
-    case 4: return (w, h, g) => fourPane(w, h, g);
+export const MIN_BODY_CPT = 675n;
+export const DISPLAY_MAX = 12;
+export const DEFAULT_GUTTER_CPT = 600n;
+
+export const TIER_THRESHOLDS = Object.freeze({
+  summaryBelow:  { w: 24000n, h: 18000n },
+  standardBelow: { w: 48000n, h: 36000n },
+});
+
+// Order matches SHAPE_INDEX in space/marshal.mjs and SHAPE_* in
+// space/cpp/claim.hpp: FULL=0 (most detailed), HALF=1, QUARTER=2, STRIP=3.
+const SHAPES = ['FULL', 'HALF', 'QUARTER', 'STRIP'];
+const MAX_PAGES_PER_PANE = 128;
+
+// Try shapes in order of decreasing detail; pick the first whose scaled
+// body size is at least minBodyCpt. Mirrors pick_shape() in solve.hpp.
+function pickShape(rectCpt, archetype, minBodyCpt) {
+  const bodyCpt = BigInt(archetype.typeScalePt.body * 100);
+  for (const shapeClass of SHAPES) {
+    const dims = archetype.shapeDimensions[shapeClass];
+    if (!dims) continue;
+    const pageW = BigInt(dims.wPt * 100);
+    const pageH = BigInt(dims.hPt * 100);
+    let num, den;
+    if (rectCpt.w * pageH < rectCpt.h * pageW) { num = rectCpt.w; den = pageW; }
+    else { num = rectCpt.h; den = pageH; }
+    const effectiveBodyCpt = (bodyCpt * num) / den;
+    if (effectiveBodyCpt >= minBodyCpt) {
+      return { shapeClass, scale: makeRational(num, den), effectiveBodyCpt };
+    }
   }
-  throw new Error(`no template for n=${n}`);
+  return {
+    error: `pane ${rectCpt.w}x${rectCpt.h}cpt too small for STRIP shape at MIN_BODY (${minBodyCpt}cpt)`,
+    law: 'L4',
+  };
 }
 
-function defaultWeights(weights, n) {
-  if (Array.isArray(weights) && weights.length === n) return weights;
-  return new Array(n).fill(1n);
+function pickTier(rectCpt) {
+  if (rectCpt.w < TIER_THRESHOLDS.summaryBelow.w ||
+      rectCpt.h < TIER_THRESHOLDS.summaryBelow.h) return 'summary';
+  if (rectCpt.w < TIER_THRESHOLDS.standardBelow.w ||
+      rectCpt.h < TIER_THRESHOLDS.standardBelow.h) return 'standard';
+  return 'full';
 }
 
-function splitHorizontal(w, h, g, weights) {
-  const [lw, rw] = apportion(w - g, defaultWeights(weights, 2));
-  return [
-    { x: 0n,        y: 0n, w: lw, h },
-    { x: lw + g,    y: 0n, w: rw, h },
-  ];
-}
-
-function splitVertical(w, h, g, weights) {
-  const [th, bh] = apportion(h - g, defaultWeights(weights, 2));
-  return [
-    { x: 0n, y: 0n,       w, h: th },
-    { x: 0n, y: th + g,   w, h: bh },
-  ];
-}
-
-function threePane(w, h, g, weights) {
-  const ws = defaultWeights(weights, 3);
-  // weights[0] is the focal weight (caller reordered). Smalls share 400 by
-  // their own weights; a missing/invalid weight is coerced to 1.
-  const smallWeights = [
-    ws[1] > 0n ? ws[1] : 1n,
-    ws[2] > 0n ? ws[2] : 1n,
-  ];
-  if (w >= h) {
-    const [lw, rw] = apportion(w - g, [600n, 400n]);
-    const [th, bh] = apportion(h - g, smallWeights);
-    return [
-      { x: 0n,        y: 0n,       w: lw, h },
-      { x: lw + g,    y: 0n,       w: rw, h: th },
-      { x: lw + g,    y: th + g,   w: rw, h: bh },
-    ];
-  }
-  const [th, bh] = apportion(h - g, [600n, 400n]);
-  const [lw, rw] = apportion(w - g, smallWeights);
-  return [
-    { x: 0n,       y: 0n,       w, h: th },
-    { x: 0n,       y: th + g,   w: lw, h: bh },
-    { x: lw + g,   y: th + g,   w: rw, h: bh },
-  ];
-}
-
-function fourPane(w, h, g) {
-  const [lw, rw] = apportion(w - g, [1n, 1n]);
-  const [th, bh] = apportion(h - g, [1n, 1n]);
-  return [
-    { x: 0n,        y: 0n,       w: lw, h: th },
-    { x: lw + g,    y: 0n,       w: rw, h: th },
-    { x: 0n,        y: th + g,   w: lw, h: bh },
-    { x: lw + g,    y: th + g,   w: rw, h: bh },
-  ];
-}
+function overlaps(a, b) {
+ 
