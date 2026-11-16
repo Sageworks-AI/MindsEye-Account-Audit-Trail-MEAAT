@@ -63,7 +63,17 @@ function areaOf(relPath) {
   return null;
 }
 
-function extractImports(source) {
+// Removes // and /* */ comments but keeps string and template literals
+// intact, so a comment that contains text like from "x" is not read as an
+// import. Conservative: regex literals are not recognised.
+function stripComments(source) {
+  return source.replace(
+    /('(?:\\.|[^'\\\n])*'|"(?:\\.|[^"\\\n])*"|`(?:\\.|[^`\\])*`)|\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,
+    (m, str) => (str !== undefined ? str : ' '));
+}
+
+function extractImports(rawSource) {
+  const source = stripComments(rawSource);
   const specs = new Set();
   for (const m of source.matchAll(/\bfrom\s+['"]([^'"]+)['"]/g)) specs.add(m[1]);
   for (const m of source.matchAll(/^\s*import\s+['"]([^'"]+)['"]/gm)) specs.add(m[1]);
@@ -129,6 +139,12 @@ export function checkFile(relPath, source) {
     const pkg = barePackageName(spec);
     if (bare.includes(pkg)) continue;
     if (AREA_NAMES.has(pkg)) {
+      if (area.prefix === 'bridge' && pkg === 'core') {
+        violations.push(
+          `${relPath}: bridge may not use bare import "${spec}" to reach core ` +
+          `(relative import of ${BRIDGE_ALLOWED_CORE_FILE} only)`);
+        continue;
+      }
       if (paths.includes(pkg)) continue;
       if (pkg === area.prefix) continue;
       if (area.prefix.startsWith(pkg + '/')) continue;
