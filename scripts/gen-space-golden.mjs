@@ -27,13 +27,37 @@ function randInt(rng, lo, hi) { return lo + (rng() % (hi - lo + 1)); }
 function toHex16(v) { return BigInt.asUintN(64, v).toString(16).padStart(16, '0'); }
 function toHexStr(arr) { return arr.map(toHex16).join(''); }
 
-function oneVector(fnName, input) {
+// Returns the golden line, or null when the ABI returns an error code and
+// allowError is false (random inputs that happen to be invalid are skipped).
+// With allowError the line is "in:<hex> err:<code>": the replay then expects
+// the same negative return code.
+function oneVector(fnName, input, allowError = false) {
   const scratch = new BigInt64Array(abi.SCRATCH_SLOTS);
   for (let i = 0; i < input.length; i++) scratch[i] = input[i];
   const outLen = abi[fnName](scratch, input.length);
-  if (outLen < 0) throw new Error(`${fnName} returned ${outLen}`);
+  if (outLen < 0) return allowError ? `in:${toHexStr(input)} err:${outLen}` : null;
   const output = Array.from(scratch.slice(input.length, input.length + outLen));
   return `in:${toHexStr(input)} out:${toHexStr(output)}`;
+}
+
+// Adds a vector from random input; skips it if the ABI rejects it.
+function pushRandom(lines, fnName, input) {
+  const v = oneVector(fnName, input);
+  if (v) lines.push(v);
+}
+
+// Adds a fixed vector that must succeed.
+function pushOk(lines, fnName, input) {
+  const v = oneVector(fnName, input);
+  if (!v) throw new Error(`${fnName}: fixed vector was rejected: ${input.join(',')}`);
+  lines.push(v);
+}
+
+// Adds a fixed vector that must be an error.
+function pushErr(lines, fnName, input) {
+  const v = oneVector(fnName, input, true);
+  if (!v.includes(' err:')) throw new Error(`${fnName}: expected an error vector for ${input.join(',')}`);
+  lines.push(v);
 }
 
 function header(label) {
@@ -52,9 +76,12 @@ function genMeasure(rng) {
     const nChars = randInt(rng, 0, 20);
     const cps = [];
     for (let i = 0; i < nChars; i++) cps.push(BigInt(randInt(rng, 0x20, 0x7E)));
-    lines.push(oneVector('space_measure_text',
-      [1n, family, fontSize, BigInt(nChars), ...cps]));
+    pushRandom(lines, 'space_measure_text',
+      [1n, family, fontSize, BigInt(nChars), ...cps]);
   }
+  pushOk(lines, 'space_measure_text', [1n, 0n, 1000n, 0n]);                  // empty text
+  pushOk(lines, 'space_measure_text', [1n, 1n, 600n, 3n, 0x41n, 0x42n, 0x43n]);
+  pushErr(lines, 'space_measure_text', [99n, 0n, 1000n, 0n]);                // bad version
   return lines.join('\n') + '\n';
 }
 
@@ -65,27 +92,33 @@ function genApportion(rng) {
     const n = randInt(rng, 1, 8);
     const weights = [];
     for (let i = 0; i < n; i++) weights.push(BigInt(randInt(rng, 1, 1000)));
-    lines.push(oneVector('space_apportion', [1n, total, BigInt(n), ...weights]));
+    pushRandom(lines, 'space_apportion', [1n, total, BigInt(n), ...weights]);
   }
+  pushOk(lines, 'space_apportion', [1n, 0n, 3n, 1n, 1n, 1n]);     // total 0
+  pushOk(lines, 'space_apportion', [1n, 100n, 1n, 7n]);           // one part
+  pushOk(lines, 'space_apportion', [1n, 100n, 3n, 1n, 1n, 1n]);   // tie-break
+  pushErr(lines, 'space_apportion', [1n, 100n, 0n]);              // no parts
+  pushErr(lines, 'space_apportion', [99n, 100n, 1n, 1n]);         // bad version
   return lines.join('\n') + '\n';
 }
 
+// The claim ABI takes 19 slots: V, op, two 8-slot claims, and one trailing
+// slot that both twins require but ignore (see space_claim_combine).
 function genClaim(rng) {
   const lines = header('claim_combine');
-  for (let t = 0; t < 20; t++) {
-    const op = BigInt(randInt(rng, 0, 2));
-    const a = [
-      BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 2000)),
-      BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 2000)),
-      BigInt(randInt(rng, 0, 50)),   BigInt(randInt(rng, 1, 15)),
-    ];
-    const b = [
-      BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 2000)),
-      BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 1000)), BigInt(randInt(rng, 0, 2000)),
-      BigInt(randInt(rng, 0, 50)),   BigInt(randInt(rng, 1, 15)),
-    ];
-    lines.push(oneVector('space_claim_combine', [1n, op, ...a, ...b]));
+  const triple = () => {
+    const v = [randInt(rng, 0, 1000), randInt(rng, 0, 1000), randInt(rng, 0, 1000)].sort((x, y) => x - y);
+    return v.map(BigInt);
+  };
+  const one = () => [...triple(), ...triple(), BigInt(randInt(rng, 0, 50)), BigInt(randInt(rng, 1, 15))];
+  for (let t = 0; t < 30; t++) {
+    pushRandom(lines, 'space_claim_combine', [1n, BigInt(randInt(rng, 0, 2)), ...one(), ...one(), 0n]);
   }
+  const z = [0n, 0n, 0n, 0n, 0n, 0n, 0n, 15n];
+  const u = [10n, 10n, 10n, 10n, 10n, 10n, 1n, 15n];
+  for (const op of [0n, 1n, 2n]) pushOk(lines, 'space_claim_combine', [1n, op, ...z, ...u, 0n]); // zero + unit
+  pushErr(lines, 'space_claim_combine', [1n, 9n, ...u, ...u, 0n]);   // unknown op
+  pushErr(lines, 'space_claim_combine', [99n, 0n, ...u, ...u, 0n]);  // bad version
   return lines.join('\n') + '\n';
 }
 
@@ -95,8 +128,14 @@ function genPaginate(rng) {
     const arch = BigInt(randInt(rng, 0, 8));
     const shape = BigInt(randInt(rng, 0, 3));
     const rows = BigInt(randInt(rng, 0, 200));
-    lines.push(oneVector('space_paginate', [1n, arch, shape, rows]));
+    pushRandom(lines, 'space_paginate', [1n, arch, shape, rows]);
   }
+  pushOk(lines, 'space_paginate', [1n, 0n, 0n, 1n]);    // one row
+  pushOk(lines, 'space_paginate', [1n, 0n, 0n, 200n]);  // many pages
+  pushOk(lines, 'space_paginate', [1n, 3n, 2n, 5n]);    // quarter page
+  pushErr(lines, 'space_paginate', [1n, 0n, 3n, 5n]);   // strip cannot hold 5 rows
+  pushErr(lines, 'space_paginate', [1n, 99n, 0n, 5n]);  // archetype out of range
+  pushErr(lines, 'space_paginate', [99n, 0n, 0n, 5n]);  // bad version
   return lines.join('\n') + '\n';
 }
 
@@ -115,11 +154,15 @@ function genAnchor(rng) {
     ];
     const newScale = [BigInt(randInt(rng, 1, 100)), BigInt(randInt(rng, 1, 100))];
     const tol = BigInt(randInt(rng, 0, 500));
-    lines.push(oneVector('space_anchor', [
+    pushRandom(lines, 'space_anchor', [
       1n, ...oldRect, ...oldScale, ...anchorPage, ...newRect, ...newScale, tol,
       1280n * 75n, 720n * 75n,
-    ]));
+    ]);
   }
+  pushOk(lines, 'space_anchor', [1n, 0n, 0n, 1000n, 1000n, 1n, 1n, 0n, 0n,
+    0n, 0n, 1000n, 1000n, 1n, 1n, 0n, 96000n, 54000n]);                       // unchanged
+  pushErr(lines, 'space_anchor', [99n, 0n, 0n, 1000n, 1000n, 1n, 1n, 0n, 0n,
+    0n, 0n, 1000n, 1000n, 1n, 1n, 0n, 96000n, 54000n]);                       // bad version
   return lines.join('\n') + '\n';
 }
 
@@ -136,8 +179,15 @@ function genSolve(rng) {
       panes.push(BigInt(randInt(rng, 0, 30)));   // rowsUpper
       panes.push(1n);                             // weight
     }
-    lines.push(oneVector('space_solve', [1n, vw, vh, BigInt(n), ...panes]));
+    pushRandom(lines, 'space_solve', [1n, vw, vh, BigInt(n), ...panes]);
   }
+  const A = 96000n, B = 54000n;
+  pushOk(lines, 'space_solve', [1n, A, B, 1n, 0n, 0n, 0n, 1n]);              // one pane
+  pushOk(lines, 'space_solve', [1n, A, B, 2n, 0n, 0n, 5n, 1n, 2n, 0n, 5n, 1n]);
+  pushOk(lines, 'space_solve', [1n, A, B, 2n, 0n, 0n, 5n, 1n, 8n, 1n, 0n, 1n]); // bar pane
+  pushOk(lines, 'space_solve', [1n, A, B, 0n]);                              // no panes
+  pushErr(lines, 'space_solve', [1n, 3000n, 2000n, 1n, 0n, 0n, 0n, 1n]);    // too small: L4
+  pushErr(lines, 'space_solve', [99n, A, B, 1n, 0n, 0n, 0n, 1n]);           // bad version
   return lines.join('\n') + '\n';
 }
 
@@ -151,6 +201,7 @@ function main() {
     ['anchor.txt', genAnchor],
     ['solve.txt', genSolve],
   ];
+  let failed = false;
   for (let i = 0; i < specs.length; i++) {
     const [name, gen] = specs[i];
     const rng = prng(0xC0FFEE + i);
@@ -158,7 +209,10 @@ function main() {
     writeFileSync(join(GOLDEN, name), content);
     const count = content.split('\n').filter((l) => l.startsWith('in:')).length;
     console.log(`gen:space-golden: ${name} (${count} vectors)`);
+    if (count < 8) { console.error(`gen:space-golden: ${name} has only ${count} vectors (need 8)`); failed = true; }
+    if (!content.includes(' err:') && name !== 'measure.txt') { console.error(`gen:space-golden: ${name} has no error vector`); failed = true; }
   }
+  if (failed) process.exit(1);
 }
 
 main();
