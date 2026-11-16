@@ -35,6 +35,10 @@ const LEVEL_FIELDS = Object.freeze([
   'opacity', 'brightness', 'saturation', 'blur', 'shadow', 'radius',
 ]);
 
+// shadow and radius are centipoints (0..100000, README #46 and
+// attention/cpp/levels.hpp); the other fields are permille (0..1000).
+const CPT_FIELDS = new Set(['shadow', 'radius']);
+
 function requireInt(v, label, min, max) {
   if (!Number.isInteger(v) || v < min || v > max) {
     throw new Error(`${label}: must be an integer in [${min}, ${max}], got ${v}`);
@@ -49,7 +53,7 @@ function requireThemeLevel(table, theme, level) {
   }
   for (const k of LEVEL_FIELDS) {
     if (!(k in row)) throw new Error(`levels.${theme}[${level}].${k} missing`);
-    requireInt(row[k], `levels.${theme}[${level}].${k}`, 0, 1000);
+    requireInt(row[k], `levels.${theme}[${level}].${k}`, 0, CPT_FIELDS.has(k) ? 100000 : 1000);
   }
   if (row.blur !== 0) {
     // We do not currently ship a blur > 0 configuration; a non-zero blur
