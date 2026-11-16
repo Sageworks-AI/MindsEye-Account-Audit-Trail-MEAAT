@@ -108,7 +108,7 @@ test('report: fresh setup gives the same head as the demo ledger', () => {
 });
 
 test('report: demo ledger matches the fixture the S1-S5 tests use', async () => {
-  const { buildDemoLedger: fixtureBuild } = await import('./fixtures/ledger.mjs');
+  const { buildDemoLedger: fixtureBuild } = await import('../test/fixtures/ledger.mjs');
   const a = setupDemo().ledger.entries().map((e) => e.id);
   const b = fixtureBuild().entries().map((e) => e.id);
   assert.deepEqual(a, b,
