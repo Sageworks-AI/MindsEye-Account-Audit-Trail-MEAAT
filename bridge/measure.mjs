@@ -27,7 +27,8 @@
 // so this module never imports sequencer. The caller marshals them through
 // sequencer.events.eventFromDraft.
 
-import { CARD_TYPES, MAX_ENTRY_LINES } from './schema.mjs';
+import { CARD_TYPES } from './schema.mjs';
+import { MAX_ENTRY_LINES } from '../core/schema.mjs';
 import {
   solve, loadDocuments, MIN_BODY_CPT, DEFAULT_GUTTER_CPT,
   weightsForMode,
